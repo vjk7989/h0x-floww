@@ -1,0 +1,43 @@
+---
+title: "E-MCP-005"
+sidebarTitle: "E-MCP-005"
+description: "Retired: doctor no longer discovers the live door, so it has nothing to compare server.json against."
+---
+
+```text retired
+E-MCP-005 — retired, doctor no longer emits this code
+```
+
+`error_code: E-MCP-005` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when the remote URL in `server.json` did not match the live
+MCP door doctor had just probed. Doctor no longer probes a door, so it has
+no live URL to compare the file against.
+
+## The fix
+
+The mismatch is still real, and you check it yourself now. Open
+`server.json`, read the `remotes[].url` entries, and compare them to the
+door's current public URL. `server.json` is generated once from whatever URL
+you gave the CLI, so a domain change or a mount change leaves it naming an
+address that no longer exists.
+
+Regenerate it with the current URL:
+
+```bash
+npx vendo mcp server-json --domain your-app.example.com \
+  --url https://your-app.example.com/api/vendo/mcp \
+  --force
+```
+
+## Related errors
+
+- [E-MCP-004](/production/troubleshooting/e-mcp-004) — `server.json` registry validation, still checked on disk
+- [E-MCP-006](/production/troubleshooting/e-mcp-006) — `server.json` that is not valid JSON, still checked on disk

@@ -1,0 +1,52 @@
+---
+title: "E-SCHED-001"
+sidebarTitle: "E-SCHED-001"
+description: "Retired: doctor no longer reads the live machines route to see whether a schedule caller exists."
+---
+
+```text retired
+E-SCHED-001 — retired, doctor no longer emits this code
+```
+
+`error_code: E-SCHED-001` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This warning fired when apps declared `vendo.json` schedules and no caller
+was authorized to trigger them. Doctor read that from the live
+`/doctor/machines` route. It reads files only now, so it never sees the
+running app's schedules.
+
+## The fix
+
+The gap is still real, and you check it yourself now. If any app's
+`vendo.json` declares a schedule, something has to be able to call
+`POST /api/vendo/tick` or the schedules never fire. With a Cloud key it already
+can: the deployment derives the tick secret from `VENDO_API_KEY` and registers
+itself at boot, and Cloud's heartbeat knocks once a minute. Without one, set the
+secret in the server environment yourself.
+
+```bash .env.local
+VENDO_TICK_SECRET=<a random secret>
+```
+
+Point an external cron (Vercel cron, a GitHub Actions schedule, plain
+crontab) at the tick route with that secret as a bearer token:
+
+```bash {2}
+curl -X POST https://your-app.com/api/vendo/tick \
+  -H "Authorization: Bearer $VENDO_TICK_SECRET"
+```
+
+Every hit fires due schedules exactly once for that window; a double hit
+from an overlapping cron is a safe no-op.
+
+## Related errors
+
+- [E-CFG-001](/production/troubleshooting/e-cfg-001) — a missing `.vendo/` file, still checked on disk
+- [E-LIVE-004](/production/troubleshooting/e-live-004) — the execution venue scheduled apps run on, also retired

@@ -1,0 +1,37 @@
+---
+title: "E-UI-001"
+sidebarTitle: "E-UI-001"
+description: "Retired: vendo eject was removed, so no copied surface can drift from the installed @vendoai/ui."
+---
+
+```text retired
+E-UI-001 — retired, doctor no longer emits this code
+```
+
+`error_code: E-UI-001` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when a surface copied into your repo by `vendo eject` came
+from an older `@vendoai/ui` than the one installed. That command was
+removed, so there is no copied surface for doctor to compare.
+
+## The fix
+
+Nothing to fix. If your repo still holds a surface you ejected before the
+command was removed, those files are yours — they keep working, and their
+data and wire logic still come from `@vendoai/ui`. Delete the leftover
+`.vendo-eject.json` manifest beside them; nothing reads it now.
+
+To restyle a shipped surface without forking it, theme it with
+`<VendoProvider theme={...}>` and the CSS variables in
+[Theming](/howto/theming).
+
+## Related errors
+
+- [E-CFG-001](/production/troubleshooting/e-cfg-001): a missing `.vendo/` config file, unrelated but in the same config family

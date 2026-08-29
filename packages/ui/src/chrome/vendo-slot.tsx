@@ -1,0 +1,506 @@
+import { log, type AppId, type Json, type ToolOutcome, type UIPayload } from "@vendoai/core";
+import type { VendoTheme } from "@vendoai/apps/contract";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useVendoProvider } from "../context.js";
+import { announcePin } from "../pin-events.js";
+import { useApp } from "../hooks/use-app.js";
+import { useAppSharing } from "../hooks/use-app-sharing.js";
+import { useReportSlot } from "../hooks/use-placements.js";
+import { useSlotApp } from "../hooks/use-slot-app.js";
+import { FluidReveal } from "../tree/fluid-reveal.js";
+import { AppFrame, PinMount } from "../tree/frames.js";
+import type { ParkedPress } from "../tree/renderer.js";
+import { useMotionLayoutEffect } from "../tree/repaint-motion.js";
+import { rememberedShape, rememberedSlotShape, rememberShape, rememberSlotApp, type ShapeBox } from "./app-shape-cache.js";
+import { useApprovalModal } from "./approval-modal.js";
+import { ChromeRoot } from "./chrome-root.js";
+import { defaultSlotSuggestions } from "./discoverability.js";
+import { developmentMode } from "./dev-mode.js";
+import { openVendoConversation } from "./overlay-registry.js";
+import { PinChrome } from "./pin-chrome.js";
+import { buildFailureNotice } from "./thread/message-data.js";
+
+/** A slot id is a code identifier ("net-worth-card"); the person choosing a
+ *  destination in the picker reads words. */
+function slotLabel(id: string): string {
+  const words = id.replace(/[-_]+/g, " ").replace(/([a-z\d])([A-Z])/g, "$1 $2").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The faint skeleton behind the ghost/empty states — decorative only. Given an
+ *  app we have served before, it draws THAT app's bones (S2) instead of the
+ *  generic shimmer; a first-ever visit and an iframe-served app keep the
+ *  shimmer. Read before paint, never during render: the store is client-only,
+ *  and bones the server could not know about are a hydration mismatch. */
+function GhostSkeleton({ appId, slotId }: { appId?: string; slotId?: string }) {
+  const [boxes, setBoxes] = useState<ShapeBox[]>();
+  // By app when the slot knows which one is coming; by SLOT in the window before
+  // the placements read answers, when all it knows is what it held last time.
+  useMotionLayoutEffect(() => setBoxes(
+    appId !== undefined ? rememberedShape(appId)
+      : slotId !== undefined ? rememberedSlotShape(slotId)
+        : undefined,
+  ), [appId, slotId]);
+  if (boxes) {
+    return (
+      <span className="fl-slot-skel fl-slot-bones" aria-hidden="true">
+        {boxes.map((box, i) => <span key={i} className="fl-bone" data-bone={box.kind} />)}
+      </span>
+    );
+  }
+  return (
+    <span className="fl-slot-skel" aria-hidden="true">
+      <span className="fl-skel-line" style={{ width: "54%" }} />
+      <span className="fl-skel-line" style={{ width: "78%" }} />
+      <span className="fl-skel-line" style={{ width: "42%" }} />
+      <span className="fl-skel-bars">
+        <span style={{ height: "42%" }} />
+        <span style={{ height: "68%" }} />
+        <span style={{ height: "52%" }} />
+        <span style={{ height: "84%" }} />
+        <span style={{ height: "62%" }} />
+      </span>
+    </span>
+  );
+}
+
+function SlotGhost({ label, detail, loading = false, appId, slotId }: { label: string; detail?: string; loading?: boolean; appId?: string; slotId?: string }) {
+  return (
+    <div className="fl-slot-ghost" role={loading ? "status" : undefined} aria-live={loading ? "polite" : undefined}>
+      <GhostSkeleton appId={appId} slotId={slotId} />
+      <span className="fl-slot-cta">
+        <span className="fl-slot-cta-label">{label}</span>
+        {detail ? <small>{detail}</small> : null}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The consumer's half of a failed load (spec §16 law 3, the consumer-voice
+ * law). Every sentence the wire throws is written for the HOST DEVELOPER — one
+ * names an environment variable, another carries an app id — so rendering
+ * `reason.message` put all of them on a HOST PAGE, the most public surface we
+ * have. The developer sentence keeps its home (the server's own error, the
+ * browser console); the person looking at this slot is told what it means for
+ * THEM. Same treatment as the grant-set card (`refusalCopy`) and the
+ * apps page (`refusalSentence`).
+ */
+function loadFailureCopy(reason: unknown): string {
+  const code = (reason as { code?: unknown } | null)?.code;
+  if (code === "forbidden") return "You don’t have access to this view.";
+  if (code === "not-found") return "This view isn’t available any more.";
+  if (code === "cloud-required") return "This view isn’t turned on for this workspace yet.";
+  return "Something on our side didn’t answer — nothing changed.";
+}
+
+/** The terminal load failure. useApp already spent its retries, so this is a
+ *  dead end until the user asks again — and without a way to ask, the slot sat
+ *  on its skeleton until a page reload (Keystone graduates A5). */
+function SlotLoadFailed({ reason, onRetry }: { reason: Error; onRetry(): void }) {
+  return (
+    <div className="fl-slot-ghost">
+      <GhostSkeleton />
+      <span className="fl-slot-cta" role="alert">
+        <span className="fl-slot-cta-label">This view didn’t load</span>
+        <small>{loadFailureCopy(reason)}</small>
+        <button type="button" className="fl-invite-btn" onClick={onRetry}>Try again</button>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The terminal BUILD failure of the app placed here.
+ *
+ * Two remedies, both honest: ask again — offered ONLY when the failed record
+ * kept the original request, because re-issuing anything else is a different
+ * build wearing this one's name — and clear the slot, which is the unplace the
+ * host's own markup comes back from.
+ *
+ * The record's `reason` is what the notice says (buildFailureNotice): the
+ * runtime classifies it before persisting, so what reaches this page is the
+ * readable half — "timed out", "quota exhausted", the `@ai-sdk/*` package a host
+ * has to install. The operator's fuller record keeps the home it has, the
+ * server's `[vendo] app build failed (app_…)` log line.
+ */
+function SlotBuildFailed({ appId, slotId, onChanged }: {
+  appId: string;
+  slotId: string;
+  onChanged(): void;
+}) {
+  const { client } = useVendoProvider();
+  const [failure, setFailure] = useState<{ reason?: string; retryable?: boolean; prompt?: string }>();
+  const [busy, setBusy] = useState(false);
+
+  // ONE read, not a poll: the record is terminal. The status already came from
+  // the placements read; this is only the retry affordance's evidence.
+  useEffect(() => {
+    let cancelled = false;
+    setFailure(undefined);
+    void client.apps.open(appId, { pending: true }).then(
+      surface => { if (!cancelled && surface.kind === "failed") setFailure(surface); },
+      () => { /* the record is failed either way; without detail there is no retry */ },
+    );
+    return () => { cancelled = true; };
+  }, [appId, client]);
+
+  const retry = async () => {
+    const prompt = failure?.prompt;
+    if (prompt === undefined) return;
+    setBusy(true);
+    try {
+      const created = await client.apps.create({ prompt });
+      // The affordance AWAITS the placement itself, so the slot showing the new
+      // build is a fact rather than a hope.
+      await client.apps.place(created.id, slotId);
+      announcePin(created.id);
+    } finally {
+      setBusy(false);
+      onChanged();
+    }
+  };
+
+  const clear = async () => {
+    setBusy(true);
+    try {
+      await client.apps.unplace(appId, slotId);
+    } finally {
+      setBusy(false);
+      onChanged();
+    }
+  };
+
+  return (
+    <div className="fl-slot-ghost">
+      <GhostSkeleton />
+      <span className="fl-slot-cta" role="alert">
+        <span className="fl-slot-cta-label">This view didn’t build</span>
+        <small>{buildFailureNotice(failure?.reason)}</small>
+        {failure?.retryable === true && failure.prompt !== undefined ? (
+          <button type="button" className="fl-invite-btn" disabled={busy} onClick={() => void retry()}>
+            Try again
+          </button>
+        ) : null}
+        <button type="button" className="fl-invite-own" disabled={busy} onClick={() => void clear()}>
+          Clear this slot
+        </button>
+      </span>
+    </div>
+  );
+}
+
+function MountedApp({ appId, placement, onParked }: { appId: string; placement?: { slotId: string; onChanged(): void }; onParked?: (parked: ParkedPress) => void }) {
+  const { client, components } = useVendoProvider();
+  const { surface, error, isLoading, refresh } = useApp(appId);
+  // The silhouette this app's NEXT wait is drawn in (S2).
+  useEffect(() => {
+    if (surface?.kind === "tree") rememberShape(appId, surface.payload);
+  }, [appId, surface]);
+  // A build that landed and a screen that no longer opens. The placement says
+  // "ready" — build-time truth, honestly reported — so only the open knows, and
+  // the card that names the reason and clears the slot has to be reachable from
+  // here too, or the slot prints the wire's own vocabulary at the person.
+  //
+  // Only a PLACEMENT gets that card, for the same reason the ✦ below hides
+  // Revert from a host-asserted app: there is no row to clear, and discovery is
+  // stood down, so both of its buttons would write to the wire and leave the
+  // screen exactly as it was. Without one the frame still says the reason.
+  if (surface?.kind === "failed" && placement !== undefined) {
+    return <SlotBuildFailed appId={appId} slotId={placement.slotId} onChanged={placement.onChanged} />;
+  }
+  if (!surface) {
+    if (error && !isLoading) return <SlotLoadFailed reason={error} onRetry={() => void refresh()} />;
+    return <SlotGhost label="Loading app…" loading appId={appId} />;
+  }
+  return <AppFrame key={appId} appId={appId} surface={surface} components={components} onParked={onParked} onAction={({ action, payload }) => client.apps.call(appId, action, payload ?? {})} />;
+}
+
+/** A generated view pinned into a slot (08-ui §4 — "or a pinned component").
+ *  Unlike an app (a whole document), a pin is a single `vendo-genui/v2` tree the
+ *  user authored and pinned in place; it mounts through the same tree renderer +
+ *  error boundary, falling back to the host's original markup if it throws. */
+export interface VendoSlotPin {
+  /** The pinned generated view (a `vendo-genui/v2` tree payload). */
+  payload: UIPayload;
+  /** Live data overriding the tree's embedded data model (08-ui §5). */
+  data?: Record<string, Json>;
+  /** Action dispatch for the pinned component; defaults to the tree renderer's
+   *  fail-soft no-op when a pin carries no live handler. */
+  onAction?(req: { nodeId: string; action: string; payload?: Json }): Promise<ToolOutcome>;
+}
+
+/** 08-ui §4; 06-apps §8 — inline mount that never sacrifices host fallback content.
+ *
+ *  A slot's one job is mounting brand-new generated apps (2026-08-02 final
+ *  shape — remix lives entirely on `<Remixable>` now). Three states:
+ *  - empty: no `appId`, no `pin`, no `children` → the ghost with a REAL CTA button
+ *    that opens the authoring surface (`onAuthor`, else the mounted conversation
+ *    or ⌘K palette, else a line saying to ask the assistant);
+ *  - app: `appId` → the whole app document mounts (via the single-app transport);
+ *  - pinned component: `pin` → the authored `vendo-genui/v2` view mounts in place.
+ *
+ *  In both filled states the swap morphs through the ENG-205 render slot, using
+ *  the host's own markup as the exit frame, and the PinMount error boundary keeps
+ *  the original `children` as the visible recovery path (06-apps §8). Without any
+ *  of the three, the children render UNTOUCHED (no wrapper — hosts may inline
+ *  slots anywhere). */
+export function VendoSlot({ id, label, description, appId: appIdProp, pin, onAuthor, onParked, discover = true, emptyState, theme, children }: {
+  id: string;
+  /** What a person choosing this slot in the "Add to…" picker reads. Defaults
+   *  to the id read as words ("net-worth-card" → "Net worth card"). */
+  label?: string;
+  /** What this spot is FOR, in your own words ("main dashboard area, where
+   *  users keep KPI views"). It reaches the agent through the slot registry, so
+   *  it can tell two slots apart that a label alone cannot. Nobody sees it. */
+  description?: string;
+  appId?: string;
+  pin?: VendoSlotPin;
+  /** Invoked when the empty-state CTA is activated — the seam to open your own
+   *  authoring surface. Defaults to opening a mounted VendoOverlay. */
+  onAuthor?(slotId: string): void;
+  /** Invoked when a press inside the mounted view is parked on an approval. The
+   *  view settles itself when the decision lands (tree/parked-approvals.ts);
+   *  this is the seam for surfacing the decision where the person already is. */
+  onParked?: (parked: ParkedPress) => void;
+  /** Pass `false` to stand pin self-discovery down even with no `appId`/`pin`
+   *  prop — for hosts that resolve the pin themselves (e.g. via useSlotApp
+   *  for a layout decision) and must not start a second poll. */
+  discover?: boolean;
+  /** Empty-state invitation config. Every string
+   *  is host-customizable with white-label defaults; suggestions are 3
+   *  host-aware prompts (generic fallbacks otherwise) whose tap PREFILLS the
+   *  conversation composer — never sends. */
+  emptyState?: {
+    /** Default "This space builds itself". */
+    title?: string;
+    /** Default "describe a view — it renders here, live on your data". */
+    subtitle?: string;
+    /** Up to 3 prompt chips. Default: generic view-authoring prompts. */
+    suggestions?: string[];
+    /** Primary button label. Default "Design a view". */
+    ctaLabel?: string;
+  };
+  /**
+   * This slot's own brand tokens, merged group by group over the provider's
+   * resolved theme — the same merge `VendoProvider` does over
+   * `defaultVendoTheme`, so with no provider above this merges over the
+   * defaults. The approval modal a press inside this slot parks on carries
+   * these tokens too, even though it portals to `<body>`.
+   *
+   * FRAME ONLY: it styles Vendo's own chrome — the ghost, the invitation, the
+   * failure cards, the ✦ pin chrome. The mounted view itself keeps the
+   * PROVIDER theme, whether it is an iframe-served app (themed over the app
+   * transport) or a `pin` rendered natively: the tree surface restates the
+   * provider tokens on its own root, so the local ones do not cascade in.
+   *
+   * A slot showing your OWN markup has no Vendo chrome on screen and gets no
+   * wrapper at all, so this does nothing there — by design.
+   */
+  theme?: Partial<VendoTheme>;
+  children?: ReactNode;
+}) {
+  const { client, components } = useVendoProvider();
+  // Screen-initiated approvals: a press inside the mounted view that parks on
+  // the guard hands itself here, and the modal asks the question centered over
+  // the page. The slot owns the presses inside it, so it owns the question
+  // they raise — no provider, no registry.
+  const approval = useApprovalModal();
+  // The tree fires the park (renderer runAction, for apps and pins alike);
+  // the modal always hears it, and a host that passed `onParked` hears it too.
+  const parked = useMemo(
+    () => (press: ParkedPress) => {
+      approval.onParked(press);
+      onParked?.(press);
+    },
+    [approval.onParked, onParked],
+  );
+  // Self-discovery (ui-usage-dx §2): with no explicit `appId`/`pin`, the slot
+  // resolves its own pinned app — hosts never write the polling dance.
+  const discovery = useSlotApp(id, { enabled: discover && appIdProp === undefined && pin === undefined });
+  // Only a READY app mounts: a placement can name a build that is still
+  // forming (or that failed), and opening an app with no document yet is a
+  // guaranteed "this view didn't load". The host's own children stay up until
+  // there is something real to swap in.
+  const appId = appIdProp ?? (pin === undefined && discovery.status === "ready" ? discovery.appId : undefined);
+  // An explicit `appId`/`pin` prop is the host asserting the slot's contents:
+  // it carries no build status of its own, and a placement written into it
+  // would never be read.
+  const resolvesItself = appIdProp === undefined && pin === undefined;
+  // The placed app's own build status — discovery's, and only discovery's.
+  const status = resolvesItself ? discovery.status : undefined;
+  // The ✦ menu's share item — asked for only where the ✦ is actually worn.
+  const sharing = useAppSharing(appId as AppId, appId !== undefined && resolvesItself);
+
+  // A slot id lives in the host's markup and nowhere else, so a surface that is
+  // not on this page (the embed's "Add to…" picker) can only learn this slot
+  // exists from here. Every state of a self-resolving slot reports it, including
+  // the untouched-children one; a host-asserted one stays out of the picker
+  // rather than promising a landing the person would never see.
+  const name = label ?? slotLabel(id);
+  useReportSlot(id, name, resolvesItself, description);
+
+  // The slot's own way back to its bones on the next cold load: the digest is
+  // keyed by app, and the skeleton has to paint before the placements read can
+  // name one.
+  useEffect(() => {
+    if (appId !== undefined) rememberSlotApp(id, appId);
+  }, [appId, id]);
+
+  // The third arm of the press, reached only when there is nowhere for it to
+  // go. Runtime-detected, never a prop: a host that mounts an overlay LATER
+  // gets the overlay, and one that never does gets a sentence instead of a
+  // button that quietly does nothing (the old behavior).
+  const [hint, setHint] = useState(false);
+  // The ✦ popover's Refresh, as a remount key.
+  const [reload, setReload] = useState(0);
+  const author = () => {
+    if (onAuthor) {
+      onAuthor(id);
+      return;
+    }
+    // One-surface model (pick P-C): authoring opens the conversation overlay
+    // with the composer focused.
+    if (!openVendoConversation()) setHint(true);
+  };
+
+  // Suggestion chips prefill the composer — never send (safe on any prompt).
+  // Without an overlay the chip is a dev-warned no-op rather than a surface
+  // that opens empty and silently drops the chip's text (cubic PR#391 finding).
+  const suggest = (prompt: string) => {
+    const opened = openVendoConversation({ prompt, send: false });
+    if (!opened && developmentMode()) {
+      log({
+        code: "ui.vendo-slot-no-overlay",
+        level: "warn",
+        message: `[vendo] VendoSlot "${id}": suggestions open the conversation surface — mount a VendoOverlay for them to land in.`,
+      });
+    }
+  };
+
+  // A build that will never land. `discovery.appId`, not `appId`: only a READY
+  // placement resolves into a mountable app id, and this one never will.
+  if (status === "failed" && discovery.appId !== undefined) {
+    return (
+      <ChromeRoot theme={theme}>
+        <div className="fl-slot" data-vendo-slot={id}>
+          <SlotBuildFailed appId={discovery.appId} slotId={id} onChanged={() => void discovery.refresh()} />
+        </div>
+      </ChromeRoot>
+    );
+  }
+
+  if (!appId && !pin) {
+    if (children !== undefined) return <>{children}</>;
+    // The placements read has not answered, so whether anything is pinned here
+    // is UNKNOWN — and an unknown must never paint as a confident "nothing is
+    // pinned here". The invite is a CLAIM about an empty slot; it waits for a
+    // confirmed one. Until then this is the same honest wait a mounting app
+    // gets: the silhouette the slot held last time, or the calm generic ghost
+    // on a first-ever visit.
+    if (discovery.isLoading) {
+      return (
+        <ChromeRoot theme={theme}>
+          <div className="fl-slot" data-vendo-slot={id}>
+            <SlotGhost label="Loading app…" slotId={id} />
+          </div>
+        </ChromeRoot>
+      );
+    }
+    // A placement row is written the moment the app id is minted, so a slot
+    // with no markup of its own says what is coming instead of inviting a
+    // second ask — the skeleton the empty state already uses, minus the
+    // invitation. BEHIND the children arm above, deliberately: a working host
+    // component must never blank into a skeleton for the length of a build.
+    // The conversation surface carries that beat for the person who asked.
+    if (status === "building") {
+      return (
+        <ChromeRoot theme={theme}>
+          <div className="fl-slot" data-vendo-slot={id}>
+            <SlotGhost label="Building your view…" loading />
+          </div>
+        </ChromeRoot>
+      );
+    }
+    // The invitation: accent-washed surface, real copy, up to three concrete
+    // suggestion chips, and a primary CTA. The skeleton stays behind at low
+    // opacity so it still reads as "a view goes here".
+    const invite = {
+      title: emptyState?.title ?? "This space builds itself",
+      subtitle: emptyState?.subtitle ?? "describe a view — it renders here, live on your data",
+      suggestions: (emptyState?.suggestions ?? defaultSlotSuggestions).slice(0, 3),
+      ctaLabel: emptyState?.ctaLabel ?? "Design a view",
+    };
+    return (
+      <ChromeRoot theme={theme}>
+        <div className="fl-slot" data-vendo-slot={id}>
+          <div className="fl-slot-ghost fl-slot-invite">
+            <GhostSkeleton />
+            <div className="fl-slot-cta" role="group" aria-label={invite.title}>
+              <span className="fl-invite-title">{invite.title}</span>
+              <small className="fl-invite-sub">{invite.subtitle}</small>
+              {invite.suggestions.length > 0 ? (
+                <>
+                  <span className="fl-invite-try">Try one</span>
+                  <div className="fl-invite-chips">
+                    {invite.suggestions.map((prompt, i) => (
+                      <button type="button" className="fl-invite-chip" key={`${i}-${prompt}`} onClick={() => suggest(prompt)}>
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+              {hint ? (
+                <small className="fl-invite-sub" role="status">
+                  Ask your assistant to build something for this spot. <strong>{name}</strong>
+                </small>
+              ) : (
+                <button type="button" className="fl-invite-btn" onClick={author}>{invite.ctaLabel}</button>
+              )}
+            </div>
+          </div>
+        </div>
+      </ChromeRoot>
+    );
+  }
+
+  const Fallback = () => <>{children}</>;
+  const mounted = appId
+    // `reload` remounts the app, so Refresh is a real round trip through
+    // get+open — and the wait is the shape-true skeleton, not a frozen view.
+    ? <MountedApp key={reload} appId={appId} placement={resolvesItself ? { slotId: id, onChanged: () => void discovery.refresh() } : undefined} onParked={parked} />
+    : <AppFrame surface={{ kind: "tree", payload: pin!.payload }} components={components} data={pin!.data} onAction={pin!.onAction} onParked={parked} />;
+  const body = (
+    <FluidReveal stateKey={appId ? `app:${appId}` : `pin:${id}`} initialExit={children}>
+      <PinMount slot={id} fallback={Fallback}>{mounted}</PinMount>
+    </FluidReveal>
+  );
+  const pinTitle = discovery.title !== undefined && discovery.title !== "" ? discovery.title : name;
+  return (
+    <ChromeRoot theme={theme}>
+      <div className="fl-slot" data-vendo-slot={id}>
+        {/* Only a PLACEMENT gets the ✦: a host-asserted `appId` prop is the
+            host's own markup decision, and offering to unpin it would clear a
+            row the prop goes on winning over. */}
+        {appId !== undefined && resolvesItself ? (
+          <PinChrome
+            appId={appId}
+            title={pinTitle}
+            context={`The view being edited is the "${pinTitle}" app (${appId}), pinned in the "${id}" slot.`}
+            {...(sharing === undefined ? {} : { sharing })}
+            onRefresh={() => setReload(n => n + 1)}
+            onRevert={() => client.apps.unplace(appId, id).then(() => void discovery.refresh())}
+          >
+            {body}
+          </PinChrome>
+        ) : (
+          <div className="fl-slot-filled">{body}</div>
+        )}
+      </div>
+      {/* Portals to <body> with its own theme boundary, so it is never trapped
+          by the host's stacking context around this slot. */}
+      {approval.modal}
+    </ChromeRoot>
+  );
+}

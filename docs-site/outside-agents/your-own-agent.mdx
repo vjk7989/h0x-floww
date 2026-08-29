@@ -1,0 +1,137 @@
+---
+title: "Your own agent"
+description: "Wire the door into an agent loop you wrote yourself: one call for the tool list, one call to run what the model picked."
+sidebarTitle: "Your own agent"
+---
+
+If your loop is the AI SDK or Mastra, use [the tool pack](/existing-agent/quickstart).
+This page is for the other loop: you call `messages.create` yourself and you
+handle the tool turns yourself.
+
+One method gives you that loop's half of the door.
+
+```ts agent.ts
+import Anthropic from "@anthropic-ai/sdk";
+import { vendo } from "@/lib/vendo";
+
+const anthropic = new Anthropic();
+
+export async function run(request: Request, task: string) {
+  const door = await vendo.agentTools(request);
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: task }];
+
+  while (true) {
+    const reply = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
+      tools: door.tools,
+      messages,
+    });
+    messages.push({ role: "assistant", content: reply.content });
+
+    const results = await door.results(reply);
+    if (results.length === 0) return { reply, embeds: door.embeds };
+    messages.push({ role: "user", content: results });
+  }
+}
+```
+
+That is the whole integration. Vendo imports nothing from Anthropic and
+Anthropic imports nothing from Vendo — `door.tools` is already the shape
+`messages.create` takes, and `door.results` already returns the shape you push
+back.
+
+## Who the agent acts as
+
+Pass the incoming request and Vendo reads the signed-in user off its session
+cookie, through the same seam the door authenticates with. Pass a user id
+instead — one of *your* ids, spelled the way your product spells it — and the
+agent acts as that person from a cron or a queue worker.
+
+```ts jobs/nightly.ts
+const door = await vendo.agentTools("user_1904");
+```
+
+Everything the agent does is attributed to them: the same guard, the same audit
+trail, the same approvals queue as the in-product agent. A subject that is not a
+real id — blank, `null`, `undefined` — is refused here rather than acting as a
+user nobody is.
+
+## One door per conversation
+
+Open it once and keep it for the whole conversation. The session it holds is
+what a parked approval resumes on, so an agent that opens a new door per tool
+call parks forever.
+
+Inside that conversation, nothing else is yours to manage. A ten-minute badge
+that runs out, or a session the door has forgotten, is re-established on the
+next call and the call goes through.
+
+## Approvals
+
+`door.results` never throws for a guarded call. If your policy parks one, the
+result block carries the sentence the model should read —
+
+> This action needs approval. Approval `apr_…` is waiting in Maple's Vendo
+> approvals queue — resolve it there, then retry.
+
+— and `door.embeds` grows a typed `vendo/approval-ref@1` for your own code:
+
+```ts
+{ kind: "vendo/approval-ref@1", approvalId: "apr_…", summary: "Send a payment — host_pay {\"amount\":1400}" }
+```
+
+The parked outcome carries the ask itself — the question a person answers, and
+the quiet facts under it:
+
+```ts
+{
+  approval: {
+    id: "apr_…",
+    question: "Send $1,400 to Acme Utilities?",
+    notes: ["Reference: March invoice", "This changes something in your account, as you."],
+  },
+}
+```
+
+Hand that block to `<VendoApproval>`, with the wire the decision is spent on:
+
+```tsx app/chat.tsx
+import { createVendoClient, VendoApproval } from "@vendoai/vendo/react";
+
+const client = createVendoClient({ baseUrl: "/api/vendo" });
+
+// wherever you render the parked call:
+<VendoApproval approval={outcome.approval} client={client} />
+```
+
+That is the whole surface: it asks on the same card the in-product agent asks
+on, decides against your wire, and settles into its own receipt. When the person
+approves, the model's retry of the same call on the same door executes it.
+
+## Long calls
+
+Generating a screen with `vendo_make` runs longer than a stock 60-second tool
+call, and `door.results` waits for it — the door beats progress frames and this
+client has no deadline of its own to give up on.
+
+## Under the hood
+
+The door is a stock MCP server over streamable HTTP, and `agentTools` is a
+client for it: it mints a short-lived user-bound token with
+[`vendo.tokenFor`](/reference/server-api), opens one MCP session at
+`/api/vendo/mcp`, lists tools, and calls them. If you would rather hold that
+client yourself — your own MCP SDK, your own session policy, a language that is
+not TypeScript — `tokenFor` is the only Vendo-shaped part and the rest is the
+protocol:
+
+```ts
+const accessToken = await vendo.tokenFor(request);
+// then any MCP client, at `${VENDO_BASE_URL}/api/vendo/mcp`, with
+// `authorization: Bearer ${accessToken}` — one session for the conversation,
+// re-mint when the ten minutes are up, and read `structuredContent` for the
+// typed envelopes.
+```
+
+What the agent may call, and what happens to a call on the way to your API, is
+in [How the door works](/outside-agents/how-the-door-works).

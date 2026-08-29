@@ -1,0 +1,31 @@
+---
+title: "E-LIVE-003"
+sidebarTitle: "E-LIVE-003"
+description: "Retired: doctor no longer reads the execution venue from /status."
+---
+
+```text retired
+E-LIVE-003 — retired, doctor no longer emits this code
+```
+
+`error_code: E-LIVE-003` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when `/status` reported an execution venue doctor did not
+recognize. Doctor no longer calls `/status`, so it never sees a venue value
+to reject.
+
+## The fix
+
+Nothing to do.
+
+## Related errors
+
+- [E-LIVE-004](/production/troubleshooting/e-live-004) — the venue check itself, also retired, with a by-hand replacement
+- [E-CLOUD-001](/production/troubleshooting/e-cloud-001) — the `VENDO_API_KEY` check doctor still runs

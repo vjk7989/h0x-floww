@@ -1,0 +1,38 @@
+---
+title: "E-AUTH-004"
+sidebarTitle: "E-AUTH-004"
+description: "Retired: doctor no longer mints an actAs credential or verifies it against your host."
+---
+
+```text retired
+E-AUTH-004 — retired, doctor no longer emits this code
+```
+
+`error_code: E-AUTH-004` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when doctor minted an away credential through your `actAs`
+seam and your principal resolver refused it. Doctor only reads files now, so
+it mints nothing and verifies nothing.
+
+## The fix
+
+The seam can still be broken, and you check it yourself now. Trigger one
+real away action and read the dev server log; a broken mint or a refused
+credential shows up there with its own error.
+
+Check `createVendo({ auth })` (or a hand-wired `actAs`), the verifier
+middleware on your host API, and the host's principal resolver. For Clerk or
+Auth0, confirm `VENDO_AWAY_TOKEN_SECRET` is the same value on both sides.
+See [Host auth](/howto/auth) for how the three auth seams fit together.
+
+## Related errors
+
+- [E-AUTH-007](/production/troubleshooting/e-auth-007) — no `actAs` seam configured at all, also retired
+- [E-CFG-001](/production/troubleshooting/e-cfg-001) — a config check doctor still runs

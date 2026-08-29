@@ -1,0 +1,32 @@
+---
+title: "E-LIVE-001"
+sidebarTitle: "E-LIVE-001"
+description: "Retired: doctor no longer calls /status, so it cannot judge the response."
+---
+
+```text retired
+E-LIVE-001 — retired, doctor no longer emits this code
+```
+
+`error_code: E-LIVE-001` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when the `/status` route answered with something other than
+a valid composition body. Doctor no longer calls `/status` or any other
+route. It reads your files, so there is no response to judge.
+
+## The fix
+
+Nothing to do. The wiring that used to produce a bad `/status` body is now
+checked on disk instead.
+
+## Related errors
+
+- [E-WIRE-003](/production/troubleshooting/e-wire-003) — the Next.js route file, checked on disk
+- [E-WIRE-001](/production/troubleshooting/e-wire-001) — the Express wiring, checked on disk

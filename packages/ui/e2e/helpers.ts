@@ -1,0 +1,96 @@
+import { expect, type Page } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+
+// fileURLToPath, not URL#pathname: pathname renders a Windows file URL as
+// "/C:/…", which the fs then reads as "C:\C:\…" — every capture on a Windows
+// machine failed at the write, after the page had already proven ready.
+export const screenshotPath = (name: string) => fileURLToPath(new URL(`./screenshots/${name}.png`, import.meta.url));
+
+/**
+ * Hold one real wire request open, and hand back its release. Nothing about the
+ * response is faked — parking is how an in-flight moment (a window opened before
+ * the broker has answered; a poll still running) is asserted on at all.
+ */
+export async function parkRequest(page: Page, pattern: string): Promise<() => void> {
+  let release = () => {};
+  const parked = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  await page.route(pattern, async route => {
+    await parked;
+    await route.continue();
+  });
+  return release;
+}
+
+export async function openScenario(page: Page, name: string): Promise<void> {
+  await page.goto(`/${name}`);
+  await expect(page.locator(`main[data-scenario="${name}"]`)).toBeVisible();
+}
+
+export async function expectFocusIndicator(page: Page): Promise<void> {
+  const visible = await page.evaluate(() => {
+    const active = document.activeElement;
+    if (!(active instanceof HTMLElement) || active === document.body) return false;
+    const style = getComputedStyle(active);
+    return (style.outlineStyle !== "none" && style.outlineWidth !== "0px")
+      || (style.boxShadow !== "none" && style.boxShadow !== "");
+  });
+  expect(visible, "keyboard focus must have a visible outline or box-shadow").toBe(true);
+}
+
+/** Assert that every currently visible native interactive can join the keyboard tab cycle. */
+export async function expectKeyboardReachability(page: Page, scopeSelector = "body"): Promise<void> {
+  const positive = await page.locator("[tabindex]").evaluateAll(nodes => nodes
+    .map(node => Number(node.getAttribute("tabindex")))
+    .filter(value => value > 0));
+  expect(positive, "positive tabindex is forbidden").toEqual([]);
+
+  const expected = await page.locator(scopeSelector).evaluate((scope, selector) => {
+    const candidates = [...scope.querySelectorAll<HTMLElement>(selector)];
+    return candidates.filter(element => {
+      if (element.matches(":disabled") || element.tabIndex < 0) return false;
+      // `checkVisibility()` is the source of truth for reachability: it accounts
+      // for `content-visibility: hidden` subtrees (e.g. the controls inside a
+      // collapsed <details>), which modern Chromium keeps laid out with a
+      // non-zero box and `display` other than `none` — so the old
+      // offset/display heuristic counted them as tab targets even though the
+      // browser correctly skips them in the sequential focus order. The extra
+      // style/offset checks stay as a belt-and-braces guard for older engines.
+      if (!element.checkVisibility()) return false;
+      const style = getComputedStyle(element);
+      return style.visibility !== "hidden"
+        && style.display !== "none"
+        && (element.offsetWidth > 0 || element.offsetHeight > 0);
+    }).map((element, index) => {
+      const id = `keyboard-target-${index}`;
+      element.dataset.keyboardTarget = id;
+      return id;
+    });
+  }, "button,input,textarea,select,a[href],summary,[tabindex]");
+
+  expect(expected.length, `${scopeSelector} should expose keyboard interactions`).toBeGreaterThan(0);
+  const seen = new Set<string>();
+  for (let index = 0; index < expected.length * 3 + 3; index += 1) {
+    const current = await page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.keyboardTarget);
+    if (current) {
+      seen.add(current);
+      await expectFocusIndicator(page);
+    }
+    if (expected.every(id => seen.has(id))) break;
+    await page.keyboard.press("Tab");
+  }
+  expect([...seen].sort(), `all visible interactions in ${scopeSelector} must be tabbable`).toEqual([...expected].sort());
+}
+
+export async function tabTo(page: Page, predicate: () => Promise<boolean>, limit = 40): Promise<void> {
+  for (let index = 0; index < limit; index += 1) {
+    if (await predicate()) {
+      await expectFocusIndicator(page);
+      return;
+    }
+    await page.keyboard.press("Tab");
+  }
+  throw new Error("Keyboard target was not reached within the tab limit.");
+}
+

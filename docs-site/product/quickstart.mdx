@@ -1,0 +1,132 @@
+---
+title: "Vendo's Full-Stack Agent"
+description: "Your agent as a panel inside your own product, in your own brand."
+sidebarTitle: "Quickstart: in your product"
+---
+
+Vendo brings the loop, the model, and the chat surface. You paste three things
+into your own client.
+
+This picks up after the two commands on the [main quickstart](/):
+
+<CodeGroup>
+
+```bash npm
+npm install @vendoai/vendo
+npx vendo init
+```
+
+```bash pnpm
+pnpm add @vendoai/vendo
+pnpm exec vendo init
+```
+
+</CodeGroup>
+
+<Steps>
+
+<Step title="Mount the provider">
+
+Wrap your app in the provider. On Next.js App Router this is your root layout —
+if you don't have one yet (Next 16 no longer scaffolds `app/layout.tsx`), create
+it. Your paths and theme are already filled in.
+
+```tsx app/layout.tsx focus={6}
+import { VendoProvider } from "@vendoai/vendo/react";
+import theme from "../.vendo/theme.json";
+
+// in your own RootLayout, props type untouched:
+<body>
+  <VendoProvider baseUrl="/api/vendo" theme={theme}>
+    {children}
+  </VendoProvider>
+</body>
+```
+
+This is the URL the panel talks to. If your app runs at the root of its
+domain, the default `/api/vendo` just works. If your app lives under a
+prefix — say everything is served from `/maple` — include it:
+`baseUrl="/maple/api/vendo"`.
+
+
+</Step>
+
+<Step title="Add the overlay">
+
+One line inside the provider puts your agent on every page. It opens over your
+app, or docks beside it with `placement="dock"`.
+
+```tsx app/layout.tsx focus={1,5}
+import { VendoOverlay, VendoProvider } from "@vendoai/vendo/react";
+
+<VendoProvider baseUrl="/api/vendo" theme={theme}>
+  {children}
+  <VendoOverlay />
+</VendoProvider>
+```
+
+</Step>
+
+<Step title="Add the slot">
+
+Put a slot where a card would go. A screen the agent builds can live there
+instead of in the panel.
+
+```tsx app/overview/page.tsx focus={3,10}
+"use client";
+
+import { VendoSlot } from "@vendoai/vendo/react";
+
+export default function Overview() {
+  return (
+    <section className="cards">
+      {/* your own components */}
+      <BalanceTiles />
+      <VendoSlot id="spend-breakdown" />
+      <RecentActivity />
+    </section>
+  );
+}
+```
+
+Empty, the slot shows a ghost with prompts that open the panel. Ask for a
+view, press **Pin to dashboard** on the card that comes back, and it renders
+in your grid and stays there.
+
+<Frame caption="Your page, your grid. The card in the middle is generated.">
+  <img
+    src="/images/maple/slot-in-page.png"
+    alt="Maple's overview page with its own quick actions, balance chart, and account tiles, and a generated spend by category card holding the slot beside them"
+    width="1280"
+    height="900"
+  />
+</Frame>
+
+</Step>
+
+</Steps>
+
+## Make it yours
+
+The setup was the same for everyone. These, in order, make it yours.
+
+<CardGroup cols={3}>
+  <Card title="Wire auth" icon="key" href="/howto/auth">
+    Swap the demo principal for your real sign-in.
+  </Card>
+  <Card title="Add tools" icon="wrench" href="/howto/tools">
+    Point Vendo at your API — the agent gets hands.
+  </Card>
+  <Card title="Approve actions" icon="shield-check" href="/howto/approvals">
+    Decide what runs and what asks first.
+  </Card>
+  <Card title="Generate screens" icon="wand-magic-sparkles" href="/howto/screens">
+    Ask for a view, pin it into your grid.
+  </Card>
+  <Card title="Theme it" icon="palette" href="/howto/theming">
+    Your fonts, colors, and radii on every surface.
+  </Card>
+  <Card title="Set instructions" icon="file-pen" href="/howto/instructions">
+    The brief your agent reads before every turn.
+  </Card>
+</CardGroup>

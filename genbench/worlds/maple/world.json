@@ -1,0 +1,115 @@
+{
+  "app": "Maple, a consumer banking app",
+  "theme": {
+    "colors": {
+      "background": "#FFFFFF",
+      "surface": "#FFFFFF",
+      "text": "#1A1A1A",
+      "muted": "#6B7280",
+      "accent": "#0F6B4E",
+      "accentText": "#FFFFFF",
+      "danger": "#C43E2F",
+      "border": "#E5E7EB"
+    },
+    "typography": { "fontFamily": "Onest, sans-serif", "baseSize": "14px" },
+    "radius": { "small": "8px", "medium": "8px", "large": "8px" },
+    "density": "comfortable",
+    "motion": "full"
+  },
+  "style": [
+    "uses the theme exactly: brand green, Onest, 8px corners — no invented colors or fonts",
+    "money always shows 2 decimals with currency symbol",
+    "dates shown as 'Aug 7' style, never ISO"
+  ],
+  "tools": {
+    "list_accounts": {
+      "does": "Every account the signed-in customer holds. The rows are the `data` array. `balance` is in CENTS: 941220 is $9,412.20.",
+      "data": {
+        "data": [
+          { "id": "acc_checking", "name": "Maple Checking", "kind": "checking", "mask": "4471", "balance": 941220 },
+          { "id": "acc_savings", "name": "Maple Savings", "kind": "savings", "mask": "8820", "balance": 2814135 },
+          { "id": "acc_credit", "name": "Maple Credit", "kind": "credit", "mask": "0934", "balance": -128840 }
+        ]
+      }
+    },
+    "get_spending": {
+      "does": "This month's spending totalled per category, largest first. The rows are the `data` array. `amount` is in CENTS: 285000 is $2,850.00.",
+      "data": {
+        "data": [
+          { "category": "housing", "amount": 285000 },
+          { "category": "groceries", "amount": 61245 },
+          { "category": "dining", "amount": 43820 },
+          { "category": "subscriptions", "amount": 18441 },
+          { "category": "transport", "amount": 9675 },
+          { "category": "coffee", "amount": 6130 }
+        ]
+      }
+    },
+    "list_transfers": {
+      "does": "Recent transfers, newest first. The rows are the `data` array. `amount` is in CENTS: 25000 is $250.00.",
+      "takes": { "limit": "number" },
+      "data": {
+        "data": [
+          { "id": "tr_1", "to": "Alex Rivera", "amount": 25000, "date": "2026-08-01", "status": "pending" },
+          { "id": "tr_2", "to": "Jordan Avery", "amount": 6000, "date": "2026-07-30", "status": "pending" },
+          { "id": "tr_3", "to": "Mission St Property", "amount": 285000, "date": "2026-07-28", "status": "completed" },
+          { "id": "tr_4", "to": "Dana Whitfield", "amount": 12550, "date": "2026-07-24", "status": "completed" }
+        ]
+      }
+    },
+    "cancel_transfer": {
+      "does": "Cancel a pending transfer. The money is returned to the source account.",
+      "takes": { "id": "string" }
+    },
+    "list_upcoming_bills": {
+      "does": "Recurring bills and subscriptions due this month, earliest due first. The rows are the `data` array. `amount` is in CENTS: 285000 is $2,850.00. Today is 2026-08-11.",
+      "data": {
+        "data": [
+          { "id": "bill_1", "name": "Mission St Rent", "amount": 285000, "due_date": "2026-08-01", "status": "paid" },
+          { "id": "bill_2", "name": "Onyx Fiber", "amount": 8900, "due_date": "2026-08-05", "status": "paid" },
+          { "id": "bill_3", "name": "Ridgeline Gym", "amount": 4500, "due_date": "2026-08-09", "status": "missed" },
+          { "id": "bill_4", "name": "Verdant Streaming", "amount": 1599, "due_date": "2026-08-12", "status": "upcoming" },
+          { "id": "bill_5", "name": "Cascade Insurance", "amount": 14200, "due_date": "2026-08-18", "status": "upcoming" },
+          { "id": "bill_6", "name": "Aster Mobile", "amount": 6200, "due_date": "2026-08-24", "status": "upcoming" }
+        ]
+      }
+    },
+    "list_budgets": {
+      "does": "The monthly spending caps the customer has set, and what has gone against each so far. The rows are the `data` array. `limit_cents` and `spent_cents` are in CENTS: 40000 is $400.00.",
+      "data": {
+        "data": [
+          { "category": "dining", "limit_cents": 40000, "spent_cents": 43820 },
+          { "category": "groceries", "limit_cents": 70000, "spent_cents": 61245 },
+          { "category": "transport", "limit_cents": 15000, "spent_cents": 9675 }
+        ]
+      }
+    },
+    "set_budget": {
+      "does": "Set the monthly spending cap for a category, replacing any cap already on it.",
+      "takes": { "category": "string", "limit_cents": "number" }
+    },
+    "list_category_groups": {
+      "does": "Every spending category with the group it rolls up into, and what it spent this month. The rows are the `data` array. `amount` is in CENTS: 61245 is $612.45.",
+      "data": {
+        "data": [
+          { "group": "Home", "category": "housing", "amount": 285000 },
+          { "group": "Food & Drink", "category": "groceries", "amount": 61245 },
+          { "group": "Food & Drink", "category": "dining", "amount": 43820 },
+          { "group": "Food & Drink", "category": "coffee", "amount": 6130 },
+          { "group": "Lifestyle", "category": "subscriptions", "amount": 18441 },
+          { "group": "Getting Around", "category": "transport", "amount": 9675 }
+        ]
+      }
+    },
+    "list_goals": {
+      "does": "The customer's savings goals and what each has put away. The rows are the `data` array. `target_cents` and `saved_cents` are in CENTS: 1000000 is $10,000.00.",
+      "data": {
+        "data": [
+          { "id": "goal_1", "name": "Emergency Fund", "target_cents": 1000000, "saved_cents": 742000 },
+          { "id": "goal_2", "name": "Japan Trip", "target_cents": 450000, "saved_cents": 112500 },
+          { "id": "goal_3", "name": "New Laptop", "target_cents": 240000, "saved_cents": 240000 }
+        ]
+      }
+    }
+  }
+}

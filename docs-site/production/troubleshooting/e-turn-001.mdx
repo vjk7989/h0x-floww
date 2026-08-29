@@ -1,0 +1,45 @@
+---
+title: "E-TURN-001"
+sidebarTitle: "E-TURN-001"
+description: "Retired: doctor no longer posts a real model turn, so it cannot see one go unanswered."
+---
+
+```text retired
+E-TURN-001 — retired, doctor no longer emits this code
+```
+
+`error_code: E-TURN-001` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when doctor posted one real turn to `<base>/threads` and no
+reply text came back. Doctor reads files now and sends no turn, so a broken
+model seat is invisible to it.
+
+## The fix
+
+You check the turn yourself now: open your app, send one message, and see if
+a reply streams back. If it does not, read the dev server log; it carries
+the provider error.
+
+The usual cause is no usable model credential. Set `VENDO_API_KEY` and Vendo
+fills the model seat with the managed Cloud gateway, no `models` option
+needed.
+
+```bash
+export VENDO_API_KEY=vnd_live_...
+```
+
+No key yet? Run `vendo login`: your human approves a code in the browser (a
+non-TTY run prints the URL and code instead), and the minted key lands in
+`.env.local` automatically. Ask your human before running it.
+
+## Related errors
+
+- [E-CLOUD-001](/production/troubleshooting/e-cloud-001) — `VENDO_API_KEY` set but not usable, which doctor still catches
+- [E-LIVE-004](/production/troubleshooting/e-live-004) — the sandbox seat, filled by the same key, also retired

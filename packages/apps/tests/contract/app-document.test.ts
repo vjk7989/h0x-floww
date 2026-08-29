@@ -1,0 +1,161 @@
+import { describe, expect, it } from "vitest";
+import { VENDO_APP_FORMAT } from "@vendoai/core";
+import {
+  appDocumentSchema,
+  validateAppDocument,
+} from "../../src/contract/index.js";
+
+const minimal = () => ({
+  format: VENDO_APP_FORMAT,
+  id: "app_chat",
+  name: "Support Chat",
+  ui: "tree" as const,
+});
+
+const invoiceChaser = () => ({
+  format: VENDO_APP_FORMAT,
+  id: "app_invoice_chaser",
+  name: "Invoice Chaser",
+  description: "Follows up on overdue invoices every Monday.",
+  ui: "tree" as const,
+  components: { InvoiceSummary: "export default function InvoiceSummary(){ return null; }" },
+  automations: ["atm_chase"],
+  egress: ["api.stripe.com", "api.resend.com"],
+  secrets: ["RESEND_API_KEY"],
+  seed: { component: "invoice-card", baseline: "sha256:abc123", wishes: ["chase the late ones"] },
+  forkedFrom: "app_invoice_template",
+  futureCapability: { version: 2, retained: true },
+});
+
+/** Assert a refusal, and — where the message IS the contract — the exact words. */
+const expectValidation = (input: unknown, message?: string): void => {
+  const result = validateAppDocument(input);
+  expect(result.ok).toBe(false);
+  if (!result.ok) {
+    expect(result.error.code).toBe("validation");
+    if (message !== undefined) expect(result.error.message).toBe(message);
+  }
+};
+
+describe("appDocumentSchema and validateAppDocument", () => {
+  it("round-trips a minimal chat view", () => {
+    expect(appDocumentSchema.parse(minimal())).toEqual(minimal());
+    expect(validateAppDocument(minimal())).toEqual({ ok: true, app: minimal() });
+  });
+
+  it("round-trips a full Invoice Chaser document losslessly", () => {
+    const document = invoiceChaser();
+    expect(appDocumentSchema.parse(document)).toEqual(document);
+    expect(validateAppDocument(document)).toEqual({ ok: true, app: document });
+  });
+
+  it("lifts a pre-wish-list seed's single instruction into the wish list", () => {
+    // Apps seeded before the wish list stored one `instruction`, and the oldest
+    // stored none at all. Both must still load, or every app remixed before the
+    // field existed fails the read-side integrity check and never opens again —
+    // and the one with an instruction must keep it, because that ask is the
+    // whole of what its re-seed has to replay.
+    for (const [stored, wishes] of [
+      [{ component: "invoice-card", baseline: "sha256:abc123" }, []],
+      [{ component: "invoice-card", baseline: "sha256:abc123", instruction: "chase the late ones" }, ["chase the late ones"]],
+    ] as const) {
+      const legacy = { ...minimal(), seed: stored };
+      const expected = { ...legacy, seed: { component: stored.component, baseline: stored.baseline, wishes } };
+      expect(appDocumentSchema.parse(legacy)).toEqual(expected);
+      expect(validateAppDocument(legacy)).toEqual({ ok: true, app: expected });
+    }
+  });
+
+  it("classifies wrong or absent app format as version", () => {
+    for (const document of [
+      { ...minimal(), format: "vendo/app@2" },
+      (({ format: _format, ...rest }) => rest)(minimal()),
+    ]) {
+      const result = validateAppDocument(document);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe("version");
+    }
+  });
+
+  it("rejects bad pin bases", () => {
+    expectValidation({ ...minimal(), seed: { component: "card", baseline: "md5:abc", wishes: ["make it mine"] } });
+  });
+
+  it("rejects empty names and pin slots", () => {
+    expectValidation({ ...minimal(), name: "" });
+    expectValidation({ ...minimal(), seed: { component: "", baseline: "sha256:abc", wishes: ["make it mine"] } });
+  });
+
+  it("enforces the pinned component limits", () => {
+    const base = { format: VENDO_APP_FORMAT, id: "app_x", name: "X" };
+    expectValidation({ ...base, components: { Text: "export default () => null;" } }); // reserved
+    expectValidation({ ...base, components: { "not-pascal": "x" } });
+    expectValidation({ ...base, components: { Big: "x".repeat(65_537) } });
+    expect(validateAppDocument({ ...base, components: { Gauge: "export default () => null;" } }).ok).toBe(true);
+  });
+
+  it("validates componentTools against the components map and tool-name grammar", () => {
+    const base = {
+      format: VENDO_APP_FORMAT,
+      id: "app_x",
+      name: "X",
+      components: { Gauge: "export default () => null;" },
+    };
+    // W4b — a stamped per-island tool manifest rides beside components.
+    expect(validateAppDocument({ ...base, componentTools: { Gauge: ["clients_search"] } }).ok).toBe(true);
+    expect(validateAppDocument({ ...base, componentTools: { Gauge: [] } }).ok).toBe(true);
+    // A manifest for an island that does not exist is a stamping bug.
+    expectValidation({ ...base, componentTools: { Missing: ["clients_search"] } });
+    // Manifest entries are registry tool names — the flat grammar, never dotted.
+    expectValidation({ ...base, componentTools: { Gauge: ["clients.search"] } });
+    expectValidation({ ...minimal(), componentTools: { Gauge: ["clients_search"] } });
+  });
+
+  it("never throws on hostile inputs with throwing getters", () => {
+    const hostile = Object.defineProperty({}, "format", {
+      enumerable: true,
+      get() {
+        throw Object.defineProperty(new Error("boom"), "message", {
+          get() {
+            throw new Error("nested boom");
+          },
+        });
+      },
+    });
+    const result = validateAppDocument(hostile);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error.code).toBe("validation");
+  });
+});
+
+// Contract §3.2 — a checkout writes each `source` key to disk, so the key space
+// is a security surface: `../` or a leading slash would put one app's checkout in
+// another app's files. The document validator is the gate every stored document
+// passes, so the rule lives there rather than at the write.
+describe("source", () => {
+  const file = { hash: `sha256:${"a".repeat(64)}`, bytes: 3, text: "abc" };
+
+  it("round-trips a relative path", () => {
+    const withSource = { ...minimal(), source: { "src/App.tsx": file } };
+    expect(appDocumentSchema.parse(withSource)).toEqual(withSource);
+    expect(validateAppDocument(withSource)).toEqual({ ok: true, app: withSource });
+  });
+
+  it("refuses a path that escapes the app's directory", () => {
+    for (const path of ["../other/App.tsx", "/etc/passwd", "src/../../x.ts", "src//App.tsx", "./App.tsx"]) {
+      const result = validateAppDocument({ ...minimal(), source: { [path]: file } });
+      expect(result.ok, path).toBe(false);
+    }
+  });
+
+  it("refuses a file carrying both text and a blobRef, or neither", () => {
+    expect(validateAppDocument({
+      ...minimal(),
+      source: { "a.ts": { ...file, blobRef: "wsb_1" } },
+    }).ok).toBe(false);
+    expect(validateAppDocument({
+      ...minimal(),
+      source: { "a.ts": { hash: file.hash, bytes: 3 } },
+    }).ok).toBe(false);
+  });
+});

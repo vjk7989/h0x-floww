@@ -1,0 +1,683 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "almond",
+  "name": "Vendo",
+  "description": "Embed an agent in your product that lets every customer automate their work, build their own views, and connect their tools, inside your brand and your guardrails.",
+  "appearance": {
+    "default": "light"
+  },
+  "colors": {
+    "primary": "#6c3bff",
+    "light": "#a78bfa",
+    "dark": "#8b6bff"
+  },
+  "background": {
+    "color": {
+      "light": "#ffffff",
+      "dark": "#0a0a0c"
+    }
+  },
+  "fonts": {
+    "family": "Onest"
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_siVHW4wVh8yDeDzMgnjLGrYYqsHMceqfdqYF9fPEGXpS",
+      "sessionRecording": false
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "mcp",
+      "chatgpt",
+      "claude",
+      "cursor",
+      "vscode"
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": [
+              "what-is-vendo",
+              "index"
+            ],
+            "icon": "rocket"
+          },
+          {
+            "group": "Vendo's Full-Stack Agent",
+            "pages": [
+              "product/quickstart"
+            ],
+            "icon": "layer-group"
+          },
+          {
+            "group": "In your existing agent",
+            "pages": [
+              {
+                "group": "Quickstart: in your agent",
+                "root": "existing-agent/quickstart",
+                "expanded": false,
+                "pages": [
+                  "existing-agent/ai-sdk",
+                  "existing-agent/mastra"
+                ]
+              }
+            ],
+            "icon": "plug"
+          },
+          {
+            "group": "From outside agents",
+            "pages": [
+              {
+                "group": "Quickstart: outside agents",
+                "root": "outside-agents/quickstart",
+                "expanded": false,
+                "pages": [
+                  "outside-agents/how-the-door-works",
+                  "outside-agents/service-keys-and-broker"
+                ]
+              }
+            ],
+            "icon": "door-open"
+          },
+          {
+            "group": "How to",
+            "pages": [
+              "howto/auth",
+              "howto/tools",
+              "howto/screens",
+              "howto/theming",
+              "howto/approvals",
+              "howto/instructions"
+            ],
+            "icon": "list-check"
+          },
+          {
+            "group": "Generated UI & apps",
+            "pages": [
+              "generated/apps",
+              "generated/host-components"
+            ],
+            "icon": "window-restore"
+          },
+          {
+            "group": "Make it yours",
+            "pages": [
+              "customize/context",
+              "customize/knowledge",
+              "customize/user-data"
+            ],
+            "icon": "sliders"
+          },
+          {
+            "group": "Capabilities",
+            "pages": [
+              "capabilities/connectors",
+              "capabilities/connected-accounts",
+              "capabilities/automations"
+            ],
+            "icon": "puzzle-piece"
+          },
+          {
+            "group": "Production",
+            "pages": [
+              "production/deploying",
+              "production/persistence",
+              "production/edge-runtimes",
+              "production/model-credentials",
+              "production/vendo-cloud",
+              "production/telemetry",
+              {
+                "group": "Troubleshooting",
+                "pages": [
+                  "production/troubleshooting/index",
+                  "production/troubleshooting/mcp-call-timeout",
+                  "production/troubleshooting/e-wire-001",
+                  "production/troubleshooting/e-wire-002",
+                  "production/troubleshooting/e-wire-003",
+                  "production/troubleshooting/e-wire-004",
+                  "production/troubleshooting/e-wire-005",
+                  "production/troubleshooting/e-wire-006",
+                  "production/troubleshooting/e-wire-007",
+                  "production/troubleshooting/e-wire-008",
+                  "production/troubleshooting/e-wire-009",
+                  "production/troubleshooting/e-wire-010",
+                  "production/troubleshooting/e-wire-011",
+                  "production/troubleshooting/e-cfg-001",
+                  "production/troubleshooting/e-cfg-002",
+                  "production/troubleshooting/e-cfg-003",
+                  "production/troubleshooting/e-cfg-004",
+                  "production/troubleshooting/e-store-001",
+                  "production/troubleshooting/e-tenant-001",
+                  "production/troubleshooting/e-dep-001",
+                  "production/troubleshooting/e-dep-002",
+                  "production/troubleshooting/e-dep-003",
+                  "production/troubleshooting/e-ui-001",
+                  "production/troubleshooting/e-dev-001",
+                  "production/troubleshooting/e-live-001",
+                  "production/troubleshooting/e-live-002",
+                  "production/troubleshooting/e-live-003",
+                  "production/troubleshooting/e-live-004",
+                  "production/troubleshooting/e-live-005",
+                  "production/troubleshooting/e-live-006",
+                  "production/troubleshooting/e-live-007",
+                  "production/troubleshooting/e-live-008",
+                  "production/troubleshooting/e-auth-001",
+                  "production/troubleshooting/e-auth-002",
+                  "production/troubleshooting/e-auth-003",
+                  "production/troubleshooting/e-auth-004",
+                  "production/troubleshooting/e-auth-005",
+                  "production/troubleshooting/e-auth-006",
+                  "production/troubleshooting/e-auth-007",
+                  "production/troubleshooting/e-auth-008",
+                  "production/troubleshooting/e-auth-009",
+                  "production/troubleshooting/e-auth-010",
+                  "production/troubleshooting/e-mcp-001",
+                  "production/troubleshooting/e-mcp-002",
+                  "production/troubleshooting/e-mcp-003",
+                  "production/troubleshooting/e-mcp-004",
+                  "production/troubleshooting/e-mcp-005",
+                  "production/troubleshooting/e-mcp-006",
+                  "production/troubleshooting/e-mcp-007",
+                  "production/troubleshooting/e-mcp-008",
+                  "production/troubleshooting/e-mcp-009",
+                  "production/troubleshooting/e-mcp-010",
+                  "production/troubleshooting/e-sched-001",
+                  "production/troubleshooting/e-turn-001",
+                  "production/troubleshooting/e-turn-002",
+                  "production/troubleshooting/e-cloud-001",
+                  "production/troubleshooting/e-model-001",
+                  "production/troubleshooting/e-tools-001",
+                  "production/troubleshooting/e-tools-002",
+                  "production/troubleshooting/e-tools-003",
+                  "production/troubleshooting/e-tools-004",
+                  "production/troubleshooting/e-tools-005"
+                ],
+                "expanded": false,
+                "icon": "life-ring"
+              }
+            ],
+            "icon": "server"
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "CLI",
+            "pages": [
+              "reference/cli",
+              "reference/vendo-init",
+              "reference/uninstall"
+            ],
+            "icon": "terminal"
+          },
+          {
+            "group": "Server",
+            "pages": [
+              "reference/server-api",
+              "reference/handler-options",
+              "reference/hooks",
+              "reference/http-routes",
+              "reference/environment-variables",
+              "reference/dot-vendo",
+              "reference/tool-overrides"
+            ],
+            "icon": "code"
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "GitHub",
+          "icon": "github",
+          "href": "https://github.com/runvendo/vendo"
+        }
+      ]
+    }
+  },
+  "redirects": [
+    {
+      "source": "/quickstart",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/quickstart-node",
+      "destination": "/product/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/try",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/pick-your-door",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/full-stack-agents",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/integrations",
+      "destination": "/capabilities/connected-accounts",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/voice",
+      "destination": "/product/mount-the-surface",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/prompts",
+      "destination": "/howto/instructions",
+      "permanent": true
+    },
+    {
+      "source": "/connect/tool-labels",
+      "destination": "/product/mount-the-surface",
+      "permanent": true
+    },
+    {
+      "source": "/install",
+      "destination": "/agents",
+      "permanent": true
+    },
+    {
+      "source": "/install.md",
+      "destination": "/agents.md",
+      "permanent": true
+    },
+    {
+      "source": "/agents/verify",
+      "destination": "/production/troubleshooting",
+      "permanent": true
+    },
+    {
+      "source": "/agents/host-auth",
+      "destination": "/howto/auth",
+      "permanent": true
+    },
+    {
+      "source": "/agents/tools",
+      "destination": "/generated/host-components",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/index",
+      "destination": "/existing-agent/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/vendo-agent/index",
+      "destination": "/product/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/mcp/index",
+      "destination": "/outside-agents/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/your-agent",
+      "destination": "/existing-agent/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents",
+      "destination": "/existing-agent/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/configuration",
+      "destination": "/existing-agent/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/mcp",
+      "destination": "/outside-agents/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/mcp.md",
+      "destination": "/outside-agents/quickstart.md",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/mcp",
+      "destination": "/outside-agents/how-the-door-works",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/mcp-registry",
+      "destination": "/outside-agents/how-the-door-works",
+      "permanent": true
+    },
+    {
+      "source": "/connect/vendo-init",
+      "destination": "/reference/vendo-init",
+      "permanent": true
+    },
+    {
+      "source": "/connect/api-tools",
+      "destination": "/howto/tools",
+      "permanent": true
+    },
+    {
+      "source": "/connect/act-as-presets",
+      "destination": "/howto/auth",
+      "permanent": true
+    },
+    {
+      "source": "/connect/dev-mode",
+      "destination": "/production/model-credentials",
+      "permanent": true
+    },
+    {
+      "source": "/connect/theming",
+      "destination": "/howto/theming",
+      "permanent": true
+    },
+    {
+      "source": "/connect/host-components",
+      "destination": "/generated/host-components",
+      "permanent": true
+    },
+    {
+      "source": "/connect/instructions",
+      "destination": "/howto/instructions",
+      "permanent": true
+    },
+    {
+      "source": "/connect/context",
+      "destination": "/customize/context",
+      "permanent": true
+    },
+    {
+      "source": "/connect/knowledge",
+      "destination": "/customize/knowledge",
+      "permanent": true
+    },
+    {
+      "source": "/ui/components",
+      "destination": "/product/mount-the-surface",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/generated-ui",
+      "destination": "/generated/apps",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/in-client-venue",
+      "destination": "/generated/in-client-venue",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/scheduler-and-webhooks",
+      "destination": "/capabilities/automations",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/principals-and-orgs",
+      "destination": "/howto/auth",
+      "permanent": true
+    },
+    {
+      "source": "/agent-sdk/index",
+      "destination": "/backend/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/agent-sdk",
+      "destination": "/backend/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/agent-sdk/converse",
+      "destination": "/backend/converse",
+      "permanent": true
+    },
+    {
+      "source": "/agent-sdk/call",
+      "destination": "/backend/run",
+      "permanent": true
+    },
+    {
+      "source": "/agent-sdk/product-run",
+      "destination": "/backend/your-own-surface",
+      "permanent": true
+    },
+    {
+      "source": "/agent-sdk/reference",
+      "destination": "/reference/server-api",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/quickstart",
+      "destination": "/existing-agent/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/overview",
+      "destination": "/existing-agent/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/ai-sdk",
+      "destination": "/existing-agent/ai-sdk",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/mastra",
+      "destination": "/existing-agent/mastra",
+      "permanent": true
+    },
+    {
+      "source": "/existing-agents/embeds",
+      "destination": "/existing-agent/embeds",
+      "permanent": true
+    },
+    {
+      "source": "/vendo-agent/quickstart",
+      "destination": "/product/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/vendo-agent/overview",
+      "destination": "/product/how-it-works",
+      "permanent": true
+    },
+    {
+      "source": "/vendo-agent/linkwarden",
+      "destination": "/product/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/vendo-agent",
+      "destination": "/product/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/mcp/quickstart",
+      "destination": "/outside-agents/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/mcp/overview",
+      "destination": "/outside-agents/how-the-door-works",
+      "permanent": true
+    },
+    {
+      "source": "/mcp",
+      "destination": "/outside-agents/quickstart",
+      "permanent": true
+    },
+    {
+      "source": "/reference/mcp-door",
+      "destination": "/outside-agents/how-the-door-works",
+      "permanent": true
+    },
+    {
+      "source": "/customize/surfaces",
+      "destination": "/product/mount-the-surface",
+      "permanent": true
+    },
+    {
+      "source": "/customize/host-components",
+      "destination": "/generated/host-components",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/compound-tools",
+      "destination": "/howto/tools",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/generated-ui",
+      "destination": "/generated/apps",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/in-client-venue",
+      "destination": "/generated/in-client-venue",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/deploying",
+      "destination": "/production/deploying",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/persistence",
+      "destination": "/production/persistence",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/edge-runtimes",
+      "destination": "/production/edge-runtimes",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/model-credentials",
+      "destination": "/production/model-credentials",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/vendo-cloud",
+      "destination": "/production/vendo-cloud",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/auth",
+      "destination": "/howto/auth",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/telemetry",
+      "destination": "/production/telemetry",
+      "permanent": true
+    },
+    {
+      "source": "/deploy/troubleshooting",
+      "destination": "/production/troubleshooting",
+      "permanent": true
+    },
+    {
+      "source": "/deploy",
+      "destination": "/production/deploying",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/architecture",
+      "destination": "/product/how-it-works",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/tools-and-safety",
+      "destination": "/product/how-it-works",
+      "permanent": true
+    },
+    {
+      "source": "/concepts",
+      "destination": "/product/how-it-works",
+      "permanent": true
+    },
+    {
+      "source": "/production/auth",
+      "destination": "/howto/auth",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/api-tools",
+      "destination": "/howto/tools",
+      "permanent": true
+    },
+    {
+      "source": "/capabilities/custom-tools",
+      "destination": "/howto/tools",
+      "permanent": true
+    },
+    {
+      "source": "/generated/quickstart",
+      "destination": "/howto/screens",
+      "permanent": true
+    },
+    {
+      "source": "/customize/theming",
+      "destination": "/howto/theming",
+      "permanent": true
+    },
+    {
+      "source": "/customize/instructions",
+      "destination": "/howto/instructions",
+      "permanent": true
+    },
+    {
+      "source": "/how-vendo-works",
+      "destination": "/product/how-it-works",
+      "permanent": true
+    },
+    {
+      "source": "/give-it-to-your-agent",
+      "destination": "/",
+      "permanent": true
+    },
+    {
+      "source": "/production/mcp-call-timeout",
+      "destination": "/production/troubleshooting/mcp-call-timeout",
+      "permanent": true
+    }
+  ],
+  "footer": {
+    "socials": {
+      "github": "https://github.com/runvendo/vendo"
+    }
+  },
+  "navbar": {
+    "primary": {
+      "type": "button",
+      "label": "Get started",
+      "href": "https://console.vendo.run"
+    }
+  }
+}

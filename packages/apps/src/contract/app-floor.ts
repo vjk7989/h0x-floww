@@ -1,0 +1,90 @@
+/**
+ * The checks floor, as a port — blueprint §7.
+ *
+ * The floor's implementation lives in the server half (`server/checking/`),
+ * because it needs the catalog, the tool shapes and a model. Its one hot-path
+ * CALLER is the render seam, which must not import a pipeline body. So the
+ * contract between them lives here on the browser-safe contract door, beside
+ * {@link Finding} and {@link Check}, for the same reason those do: both sides
+ * already speak the contract.
+ *
+ * One method: the component-screen gauntlet. The AI reviewer is deliberately NOT
+ * part of it — it spends a model call, and the seam runs on every commit.
+ * Judgment belongs to `validate`.
+ */
+import {
+  type AppDocument,
+  type AppId,
+  type Finding,
+  type TreeNode,
+} from "@vendoai/core";
+
+export interface AppFloor {
+  /**
+   * The component-screen gauntlet (`app.tsx`): compile, scan, typecheck, render
+   * once in the sealed VM, tree-check the output.
+   */
+  component(input: { appId: AppId; source: string }): Promise<ComponentPaintResult>;
+}
+
+/** What the floor's component gauntlet hands the render seam: a refusal with
+ *  the blocking lines, or everything one paint needs. */
+export type ComponentPaintResult =
+  | {
+    ok: false;
+    blocking: readonly string[];
+    /** The DEPLOYMENT could not check the screen — no compiler where the checks
+     *  run. Set only for that class, because it is the one refusal an author
+     *  cannot act on: handing these sentences back as repair instructions spends
+     *  a writer's whole budget rewriting a screen nothing ever read. */
+    environment?: true;
+  }
+  | {
+    ok: true;
+    nodes: Record<string, TreeNode>;
+    root: string;
+    interactive: {
+      compiledSource: string;
+      queries: Record<string, unknown>;
+      queryPlan: readonly { tool: string; input?: unknown }[];
+      /** A PORTED screen's mount props — the baseline's own sampleProps, the
+       *  values the floor just painted with. The client's VM boots from this
+       *  half, and a ported screen that lost them there would paint blank on
+       *  the first click. */
+      props?: Record<string, unknown>;
+    };
+  };
+export interface CheckInput {
+  document: AppDocument;
+  /** The user's own words — what the app was asked to be. */
+  request: string;
+  /**
+   * The tree the screen just RENDERED — set on the paint gate and nowhere else,
+   * because that is the only moment it exists. A check about what is on screen
+   * ("no unmasked account numbers") has nothing else to read, and no document
+   * carries it: a screen's tree is what rendering it produces, so this one is
+   * authoritative exactly because nothing stored it — it is this screen, on this
+   * data, one moment ago.
+   */
+  renderedTree?: { root: string; nodes: TreeNode[] };
+}
+
+/**
+ * A check on the floor. Two kinds, and the difference is who decides:
+ *
+ * - `fact` — decidable by looking things up, so it is plain code the floor runs.
+ * - `judgment` — a rule only a reader can apply, so it is one sentence that
+ *   joins the reviewer's rubric as its own line.
+ *
+ * `kind` is OPTIONAL on the fact variant and absence means `"fact"`: checks
+ * predate this field, and the floor is a safety floor. Anything that is not
+ * explicitly a judgment rule is code we run — a check that silently stops
+ * firing is the worst failure this contract could allow.
+ */
+export type Check =
+  | { name: string; kind?: "fact"; run(input: CheckInput): Promise<Finding[]> }
+  | { name: string; kind: "judgment"; rule: string };
+
+/** Re-exported so the contract door is the one place a consumer reads the
+ *  checking vocabulary from, even though the shape itself lives in core (L1). */
+export type { Finding };

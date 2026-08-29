@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "rootDir": "src",
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true
+  },
+  "include": ["src"],
+  // hosted-store.test-util.ts is NOT excluded: it is the published `./test-util`
+  // subpath — the ONE fake console every consumer of the hosted store drives it
+  // through, so a second copy cannot drift from this one.
+  "exclude": ["src/**/*.test.ts", "src/fixtures.test-util.ts", "src/backends.test-util.ts"]
+}

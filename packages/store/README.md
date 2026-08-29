@@ -1,0 +1,74 @@
+# @vendoai/store
+
+`@vendoai/store` implements the `@vendoai/core` persistence seams with one Postgres schema. It uses PGlite for a zero-config local database and the same schema on a hosted Postgres service.
+
+Read [Persistence](https://docs.vendo.run/deploy/persistence).
+
+```ts
+import { createStore } from "@vendoai/store";
+
+const store = createStore({ dataDir: ".vendo/data" });
+await store.ensureSchema();
+```
+
+For production, pass a Postgres connection string explicitly, for example `createStore({ url: process.env.POSTGRES_URL })`. Without `url`, PGlite stores durable data in `dataDir` (default `.vendo/data`); `memory://` is also supported. PGlite is rejected on known serverless filesystems.
+
+## Tables
+
+| Table | Key columns (stable) | Holds |
+| --- | --- | --- |
+| `vendo_meta` | `key, value` | schema version, boot id |
+| `vendo_apps` | `id, subject, enabled, doc, created_at, updated_at` | each user's app document and ownership |
+| `vendo_records` | `collection, id, data, refs, created_at, updated_at, revision` | generic record collections; `refs` is GIN-indexed for host joins; `revision` backs atomic writes |
+| `vendo_blobs` | `namespace, key, bytes, content_type, created_at` | file storage, exports, screenshots |
+| `vendo_threads` | `id, subject, harness_state, created_at, updated_at` | conversation threads; `harness_state` is the conversation's harness continuity, one slot per thread |
+| `vendo_grants` | `id, subject, tool, descriptor_hash, scope, duration, app_id, automation_id, source, granted_at, revoked_at, expires_at` | permission grants |
+| `vendo_approvals` | `id, subject, request, status, decided_at, session_id, consumed_at, created_at` | approval queue |
+| `vendo_audit` | `id, at, kind, subject, venue, presence, app_id, tool, event` | append-only audit log |
+| `vendo_automations` | `id, subject, armed, data, when_kind, created_at, updated_at, revision` | automation records; `when_kind` is a generated projection of `data.when.kind` |
+| `vendo_runs` | `id, automation_id, trigger, status, record, started_at, finished_at` | automation run records |
+| `vendo_secrets` | `name, ciphertext, created_at` | optional encrypted secret values |
+| `vendo_mcp_clients` | `id, data, refs, created_at, updated_at` | door-owned MCP client state |
+| `vendo_mcp_grants` | `id, data, refs, created_at, updated_at` | door-owned MCP grant state |
+| `vendo_knowledge_docs` | `id, data, refs, created_at, updated_at` | knowledge corpus documents (built-in local engine) |
+| `vendo_knowledge_chunks` | `id, data, refs, created_at, updated_at` | knowledge corpus chunks (built-in local engine index) |
+
+A generated app's OWN data is not here: it is a SQL database of its own, one fenced Postgres schema per app (`postgresAppDatabase`, `appSchema`). What remains of the `app:<appId>:<name>` grammar is the app-scoped record collections and blob namespaces Vendo's own blocks address that way: those WRITES require an existing `vendo_apps` row and fail closed with `not-found` ("session may have expired") when there is none — the app never existed, or it was erased; reads on a missing app return empty. Except for the reserved names below, collection names remain opaque and use `vendo_records`; non-`app:`-prefixed collections and namespaces have no principal linkage.
+
+Generic record collections and the dedicated door-owned and knowledge tables
+expose the optional
+`RecordStore.claim` capability: one database statement compares the current
+`data` and `refs`, then replaces or deletes the row. Exactly one concurrent
+claimant receives `true`.
+
+Ordinary record collections expose optional `records(collection).atomic` operations: `insertIfAbsent(record)` for one-winner claims and `compareAndSwap(record, expectedRevision)` for revision-guarded updates. Both PGlite and hosted Postgres use the same atomic SQL. The capability is optional at the core seam and reserved typed-table routes may omit it.
+
+## Reserved collections (block seam)
+
+Blocks receive core's plain `StoreAdapter`, so these exact `records()` collection names route to their typed tables:
+
+| Collection | Primary key | Data | Synthesized refs | Record timestamps |
+| --- | --- | --- | --- | --- |
+| `vendo_grants` | grant id | `PermissionGrant` | `subject`, `tool`, optional `app_id`, optional `automation_id` | `grantedAt` / `revokedAt ?? grantedAt` |
+| `vendo_approvals` | approval id | `{ request, status, decidedAt?, sessionId?, consumedAt? }` | `subject`, `status` | `request.createdAt` / `consumedAt ?? decidedAt ?? request.createdAt` |
+| `vendo_audit` | audit event id | `AuditEvent` | `subject`, `kind`, optional `app_id`, optional `tool` | `at` / `at` |
+| `vendo_threads` | thread id | `{ subject, messages }` | `subject` | table `created_at` / `updated_at` |
+| `vendo_automations` | automation id | `AutomationRecord` | `subject`, `when_kind` | record `createdAt` / `updatedAt` |
+| `vendo_runs` | run id | `{ automationId, trigger, status, record, startedAt, finishedAt? }` | `automation_id`, `status` | `startedAt` / `finishedAt ?? startedAt` |
+| `vendo_apps` | app id | `{ subject, enabled, doc }` | `subject` | table `created_at` / `updated_at` |
+| `vendo_mcp_clients` | client id | block-internal JSON | caller-supplied, arbitrary keys | table `created_at` / `updated_at` |
+| `vendo_mcp_grants` | grant id | block-internal JSON | caller-supplied, arbitrary keys | table `created_at` / `updated_at` |
+| `vendo_knowledge_docs` | doc id | knowledge-engine JSON | caller-supplied, arbitrary keys | table `created_at` / `updated_at` |
+| `vendo_knowledge_chunks` | chunk id | knowledge-engine JSON | caller-supplied, arbitrary keys | table `created_at` / `updated_at` |
+
+Typed reserved writes validate their data, require embedded ids to match the record id, and upsert the typed row — with two enforced exceptions. `vendo_audit` is append-only: `put` on an existing id and `delete` are both refused; audit rows are erased only through the erase API below. `vendo_apps`, `vendo_grants`, and `vendo_threads` refuse cross-subject flips atomically: a put whose id already belongs to another subject fails with a conflict. The data is authoritative: caller-supplied `refs` are ignored on write and synthesized from typed columns on read. Their routed `list({ refs })` accepts only the refs shown above. The door-owned and knowledge collections use generic record semantics in dedicated tables: the store does not validate their payloads, and refs filters accept arbitrary keys. Generic and routed record lists are uniformly newest-first by `(createdAt, id)`.
+
+Ephemeral principals take the SAME path as everyone else: their rows are ordinary disk rows under their subject, and the erase API below is the cleanup path for them.
+
+## Encryption
+
+`createStore({ encryption: { key } })` (base64 32-byte key) encrypts `vendo_secrets.ciphertext` with AES-256-GCM; everything else stays host-queryable plaintext by design. Encryption is production-owned: set `VENDO_STORE_ENCRYPTION_KEY` in the deploy environment and `createVendo` reads it when no store is passed; without a key, dev mode stores secrets unencrypted (`allowUnencryptedSecrets`, `plain@1:` envelope) and production secret writes fail closed. Ciphertext is bound to its secret name via AAD (`v2` envelope).
+
+## Retention and erasure
+
+`eraseStore(store)` is the store-level erase API — `bySubject(subject)` for full erasure and `byApp(appId)` — cascading the matching rows across all 20 tables (ephemeral subjects included — their rows are ordinary disk rows) and returning per-table deleted counts. It is the only sanctioned deletion path for `vendo_audit` rows. It is also re-exported from `@vendoai/vendo/server`. Host SQL remains available for everything else.

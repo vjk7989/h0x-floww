@@ -1,0 +1,147 @@
+---
+title: "Telemetry"
+sidebarTitle: "Telemetry"
+description: "What a running Vendo deployment reports about itself, what the build tooling reports, what neither ever sends, and every way to turn both off."
+---
+
+Vendo collects two streams: what a running deployment reports about itself, and
+what the build and development tooling reports.
+
+Neither ever carries a prompt, a tool argument, a row, a message, or a person.
+
+## What a deployment reports
+
+Runtime telemetry is Vendo describing its own behavior inside your process —
+which adapters it booted with, how a turn went, and whether Vendo's own code
+warned or failed.
+
+It uploads only when `VENDO_API_KEY` is set and no kill switch is tripped. A
+keyless deployment installs no sink at all: nothing is queued and nothing is
+sent. `NODE_ENV` gates this stream not at all — it runs in production, which is
+the point of it.
+
+The console can stop a talking deployment mid-flight too. If your org has
+telemetry disabled, the ingest door answers `disabled: true` and the SDK stops
+uploading for the rest of the process lifetime.
+
+---
+
+## The five events
+
+The catalog is closed. A sixth event, or a new property on an existing one, is a
+contract change on both the SDK and the console.
+
+| Event | Fires when | Carries |
+| --- | --- | --- |
+| `deployment_boot` | `createVendo` finishes composing | `adapters` (the filled slot names), `blocks`, `framework` |
+| `agent_run` | One agent turn ends | `durationMs`, `ttftMs`, `storeMs`, `promptMs`, `modelMs`, `toolsMs`, `guardMs`, `steps`, `toolCalls`, `tools`, `modelFamily`, `outcome`, `errorCode` |
+| `app_generated` | One app generation finishes | `components` (uses per name), `durationMs`, `outcome`, `kind` |
+| `guard_decision` | The guard renders a decision | `kind`, `decision`, `tool` |
+| `sdk_error` | Vendo's own logger emits `warn` or `error` | `code`, `level`, `message`, `data`, `stack`, `runtime` |
+
+`agent_run`'s time fields are durations only, never content. `ttftMs` is how long
+the person waited for the first word, and the phase marks say where the turn's
+wall time went — never what was read, prompted, thought, called, or judged.
+
+`sdk_error` is the one with free text, and the text is Vendo's own authored
+sentence. `data` carries each logged key's shape, never its value, and `stack`
+carries `@vendoai` frames only.
+
+Who the deployment is never rides the body. The console resolves org, project,
+and deployment from the identity headers below, so a deployment cannot claim to
+be another one.
+
+---
+
+## Deployment identity headers
+
+Every key-authed request from a running deployment carries three headers.
+
+| Header | Value |
+| --- | --- |
+| `x-vendo-deployment-host` | The OS hostname, or `unknown` on runtimes with none |
+| `x-vendo-deployment-name` | The deployment name resolved from the project root |
+| `x-vendo-deployment-version` | The running `@vendoai/vendo` version |
+
+Values are stripped to printable ASCII before they are sent, so a hostname with
+an emoji in it can never take a request down. Model gateway traffic is the one
+exception: it rides the stock Anthropic provider and carries none of them.
+
+---
+
+## Routing SDK logs somewhere else
+
+Every `warn` or `error` Vendo writes to the operator log also becomes an
+`sdk_error` event. To send those lines to your own observability stack, pass a
+`logger`:
+
+```ts highlight={7,8,9,10}
+import { createVendo } from "@vendoai/vendo/server";
+import type { VendoLogger } from "@vendoai/core";
+
+const vendo = createVendo({
+  auth: authJs(),
+  logger: (event) => {
+    myObservability.record({
+      level: event.level,
+      code: event.code,
+      message: event.message,
+    });
+  },
+});
+```
+
+A host-passed logger always wins. Leaving it unset keeps today's console lines,
+byte for byte.
+
+---
+
+## What the build tooling reports
+
+Build and development telemetry runs in `vendo init`, `sync`, and `doctor`. It
+never fires from a deployed app and never collects end-user activity.
+
+By default an event carries a random anonymous id, allowlisted counts and short
+enums, and a salted one-way hash of the git origin URL so events from one repo
+group together. That id is a random UUID, not derived from a machine, account,
+project, or app — deleting `~/.vendo/telemetry.json` rotates it.
+
+A well-formed `VENDO_API_KEY` additionally marks each event `cloud: true` and
+attaches the SHA-256 hash of the key, which joins to the owning console account.
+The raw key is never sent.
+
+Events never contain source, file paths, prompts, generated UI, tool inputs or
+outputs, keys, environment values, request bodies, or stack traces. The cloud
+lane's `errorDetail` is the only free-text property, and it is scrubbed first:
+file paths, email addresses, and secret-shaped strings become fixed tokens, then
+the result is capped at 200 characters.
+
+Events land in PostHog by kind, and never in both. `init_started`,
+`init_completed`, `init_failed`, `star_prompt`, and `error_class` are product
+analytics and are kept. `doctor_run`, `command_run`, and `agent_run` are
+operational records — this ran, here is how it went — so they go to PostHog's
+Logs product, where retention is enforced at 30 days. Same key, same allowlist,
+same scrubbing, same opt-outs either way.
+
+The full event allowlist is maintained in
+[`TELEMETRY.md`](https://github.com/runvendo/vendo/blob/main/TELEMETRY.md).
+
+---
+
+## Opting out
+
+Three environment values stop both streams. Set any one of them.
+
+| Variable | Blocks when |
+| --- | --- |
+| `VENDO_TELEMETRY_DISABLED` | equal to `"1"` or `"true"` |
+| `DO_NOT_TRACK` | equal to `"1"` or `"true"` |
+| `CI` | set to anything other than `""`, `"0"`, or `"false"` |
+
+```bash .env.local highlight={1}
+VENDO_TELEMETRY_DISABLED=1
+```
+
+The build lane has a fourth control of its own: `"optedOut": true` in
+`~/.vendo/telemetry.json`. An opted-out user with a Cloud key sends nothing on
+either lane.

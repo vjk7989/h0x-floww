@@ -1,0 +1,64 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  // The docs-rot suites live in @vendoai/vendo but READ docs-site/** and
+  // README.md — @vendoai/vendo's registry codes against their troubleshooting
+  // pages, every docs.vendo.run URL the CLI prints against a real file. Those
+  // paths are OUTSIDE the package, and a turbo `inputs` glob cannot escape its
+  // package directory, so the global hash is the only thing that can see them.
+  // Without this a docs-only edit replays a cached green and the tripwire that
+  // exists to catch a retired page never fires. Broader than the one task that
+  // needs it, and deliberately so: correctness over cache depth.
+  "globalDependencies": ["docs-site/**", "README.md"],
+  "tasks": {
+    "build": { "dependsOn": ["^build"], "outputs": ["dist/**", ".next/**", "!.next/cache/**"] },
+    // The screen engine's WebAssembly is copied out of the wasmfile dependency at
+    // build time and sits at the package root, so it is the same relative path from
+    // src/ (vitest) and from dist/ (a published install). It has to be a declared
+    // OUTPUT or a cache hit restores dist/ and leaves the engine with no bytes.
+    "@vendoai/apps#build": { "dependsOn": ["^build"], "outputs": ["dist/**", "quickjs.wasm"] },
+    "test": { "dependsOn": ["^build", "build"], "env": ["CI", "POSTGRES_URL", "VITEST_MIN_FORKS", "VITEST_MAX_FORKS", "VITEST_MIN_THREADS", "VITEST_MAX_THREADS"] },
+    "test:ui": { "dependsOn": ["^build", "build"], "env": ["CI", "VITEST_MIN_FORKS", "VITEST_MAX_FORKS", "VITEST_MIN_THREADS", "VITEST_MAX_THREADS"] },
+    "test:coverage": { "dependsOn": ["^build", "build"], "outputs": ["coverage/**"], "env": ["CI", "POSTGRES_URL", "VITEST_MIN_FORKS", "VITEST_MAX_FORKS", "VITEST_MIN_THREADS", "VITEST_MAX_THREADS"] },
+    // The install seam packs the WHOLE publish set off disk and runs the real
+    // CLI, so its inputs are every packages/* dist — none of which turbo can
+    // see, because the fixture deliberately declares no workspace dependency
+    // (a `workspace:` edge is the exact shortcut it exists to rule out).
+    // `vendoai#build` is the closure in one edge: the alias depends on the
+    // umbrella, which depends on every block. `cache: false` because a task
+    // whose real inputs are outside the graph must never replay a stale pass —
+    // that is how a green suite becomes a blind fixture.
+    "@vendoai-fixtures/install-seam#test": {
+      "dependsOn": ["vendoai#build"],
+      "cache": false,
+      "env": ["CI", "VITEST_MIN_FORKS", "VITEST_MAX_FORKS", "VITEST_MIN_THREADS", "VITEST_MAX_THREADS"]
+    },
+    "conformance": { "dependsOn": ["^build", "build"], "env": ["CI", "POSTGRES_URL"] },
+    // `build` as well as `^build`. @vendoai/actions and @vendoai/store resolve
+    // their own subpath `imports` (#actions/host-files, #store/db, #store/crypto)
+    // to ./dist/*.js, and tsconfig.test.json — which includes tests/ as well as
+    // src/, so it can carry no outDir — leaves TypeScript no way to map those
+    // back to source. A typecheck therefore reads its OWN dist, not just its
+    // dependencies'.
+    //
+    // Undeclared, the two were unordered WITHIN a package, and `compile` runs
+    // them in one pass (`turbo run build typecheck`). Whichever one turbo gave a
+    // slot to first decided the result: on main 4b57b1e75, actions:typecheck
+    // started 2.6s BEFORE actions:build restored and reported TS2307 against its
+    // own `imports`; at 7d32670d7 the identical pair of hashes ran in the
+    // opposite order and the job was green. A coin flip, NOT a cache miss — the
+    // build was a cache hit both times. It is only flipped when the typecheck
+    // itself is a miss, which is how it sat green for weeks.
+    "typecheck": { "dependsOn": ["^build", "build"] },
+    "lint": {},
+    // The root-level eslint over packages/* (eslint.blocking.config.mjs). It
+    // parses ~1,500 files and takes 2m20s cold, so it is a turbo task rather
+    // than a plain step in the `lint` script — `pnpm lint` is documented as
+    // cached and a step that always pays two minutes breaks that. The inputs
+    // are everything the run reads: the tracked files under packages/ (turbo
+    // skips git-ignored ones, so dist/ and node_modules/ are already out), the
+    // config, and the lockfile, since the rule set lives in the plugins.
+    "//#lint:packages": {
+      "inputs": ["packages/**", "eslint.blocking.config.mjs", "pnpm-lock.yaml"]
+    }
+  }
+}

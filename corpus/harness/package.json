@@ -1,0 +1,28 @@
+{
+  "name": "@vendoai/corpus-harness",
+  "version": "0.3.1",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "corpus": "node --import tsx src/cli.ts",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@vendoai/actions": "workspace:*",
+    "@vendoai/apps": "workspace:*",
+    "@vendoai/core": "workspace:*",
+    "@vendoai/ui": "workspace:*",
+    "@vendoai/vendo": "workspace:*",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^3.2.6",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.6"
+  }
+}

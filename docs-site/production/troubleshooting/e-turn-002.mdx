@@ -1,0 +1,30 @@
+---
+title: "E-TURN-002"
+sidebarTitle: "E-TURN-002"
+description: "Retired: doctor no longer needs a running app, so the model turn is never blocked."
+---
+
+```text retired
+E-TURN-002 — retired, doctor no longer emits this code
+```
+
+`error_code: E-TURN-002` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code marked the live model turn as skipped because your app was not
+answering. Doctor runs no model turn at all now, so nothing is skipped.
+
+## The fix
+
+Nothing to do.
+
+## Related errors
+
+- [E-TURN-001](/production/troubleshooting/e-turn-001) — what that turn used to catch, and how to check it by hand
+- [E-CLOUD-001](/production/troubleshooting/e-cloud-001) — the `VENDO_API_KEY` check doctor still runs

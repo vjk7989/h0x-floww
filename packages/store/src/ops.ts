@@ -1,0 +1,973 @@
+import {
+  assertEngineCollection,
+  VENDO_STORE_WIRE_FORMAT,
+  VendoError,
+  type AuditEvent,
+  type AuditFilters,
+  type AuditPage,
+  type AuditQuery,
+  type AuditTallyQuery,
+  type AuditTallyRow,
+  type FilesAdapter,
+  type Json,
+  type RecordStore,
+  type StoreOps,
+  type UsageCountQuery,
+  type UsageTallyQuery,
+  type UsageTallyRow,
+  type VendoRecord,
+} from "@vendoai/core";
+import type { Db, Query } from "./db.js";
+import { eraseStore, type EraseAppSql } from "./erase.js";
+import { storeFiles, storeFilesForDb } from "./files-store.js";
+import { collectionFootprints } from "./footprint.js";
+import { appendThreadMessages, putThreadRow, THREAD_MESSAGES_AGGREGATE, threadFromRow } from "./helpers/rows.js";
+import { setHarnessState } from "./helpers/threads.js";
+import { turnLoadOverOps } from "./helpers/turn.js";
+import { cursorMs, decodeCursor, encodeCursor, iso, pageLimit, text } from "./helpers/utils.js";
+import { createRecordStore } from "./records.js";
+import { storeRetention } from "./retention.js";
+import { createReservedRecordStore, threadRecord, watermarkPage } from "./routing.js";
+import { secretStore, storeSecrets } from "./secrets.js";
+import { dbFor, type VendoStore } from "./store.js";
+import { invalid, parseThreadData, requireJson } from "./validate.js";
+import { workspaceRows, type PreparedWrite } from "./workspace-rows.js";
+
+/** The commit ledger's collection in the generic records table: one row per
+ *  workspace.commit, which is what gives the verb its history entries and its
+ *  idempotency-key replay — no new table. Rows carry the workspace owner as a
+ *  subject ref, so the erase cascade reaches them. */
+const WORKSPACE_COMMITS = "vendo_workspace_commits";
+
+interface WorkspaceEntry {
+  path: string;
+  data?: unknown;
+  /** A tombstone: the commit removes this path (history keeps the content it
+   *  removed, because the trail is append-only). */
+  delete?: true;
+  /** Strict compare-and-swap against the revision the caller read — the
+   *  `/orgs` mounts' commit policy. A stale one refuses the WHOLE commit.
+   *  `null` is the create-only guard: the caller read nothing at this path, so
+   *  the commit must lose to whoever created it first. The absent field is
+   *  unguarded. */
+  expectedRevision?: number | null;
+}
+
+function parseWorkspaceEntries(entries: unknown[]): WorkspaceEntry[] {
+  // An empty commit is caller nonsense with no single right answer — a commit
+  // id and a history entry for a change nobody made, or silence — and the wire
+  // has always refused it (`storeWireWorkspaceCommitRequestSchema`,
+  // `entries.min(1)`), so the local half was answering a question the hosted
+  // half rejected.
+  if (entries.length === 0) invalid("a workspace commit must carry at least one entry");
+  const seen = new Set<string>();
+  return entries.map((entry) => {
+    const path = (entry as { path?: unknown } | null)?.path;
+    if (typeof path !== "string" || path === "") invalid("workspace entry needs a non-empty path");
+    const tombstone = (entry as { delete?: unknown }).delete === true;
+    if (!tombstone && (entry as { data?: unknown }).data === undefined) {
+      invalid(`workspace entry ${path} needs data`);
+    }
+    const expectedRevision = (entry as { expectedRevision?: unknown }).expectedRevision;
+    if (expectedRevision !== undefined
+      && expectedRevision !== null
+      && typeof expectedRevision !== "number") {
+      invalid(`workspace entry ${path} has a non-numeric expectedRevision`);
+    }
+    // One commit, one mutation per path. Two entries for the same path leave a
+    // commit with no single before-image, so the path's trail would name two
+    // superseded revisions under one commit id and neither would be THE one it
+    // replaced. There is nothing a duplicate expresses that a second commit
+    // does not, so it is caller nonsense and says so.
+    if (seen.has(path)) invalid(`workspace entry ${path} appears twice in one commit`);
+    seen.add(path);
+    return {
+      path,
+      ...(tombstone ? { delete: true as const } : { data: (entry as { data: unknown }).data }),
+      ...(expectedRevision === undefined ? {} : { expectedRevision }),
+    };
+  });
+}
+
+/** The revisions a set of paths currently hold, absent for a path with no row —
+ *  the compare half of a strict commit for the entries `land` never sees. */
+async function headRevisions(db: Db, owner: string, paths: string[]): Promise<Map<string, number>> {
+  if (paths.length === 0) return new Map();
+  const result = await db.query(
+    `SELECT path, revision FROM vendo_workspace_files WHERE owner = $1 AND path = ANY($2::text[])`,
+    [owner, paths],
+  );
+  return new Map(result.rows.map((row) => [text(row["path"]), Number(row["revision"])]));
+}
+
+const commitEntries = (commit: VendoRecord): WorkspaceEntry[] =>
+  (commit.data as { entries?: WorkspaceEntry[] }).entries ?? [];
+
+const commitTouches = (commit: VendoRecord, path: string): boolean =>
+  commitEntries(commit).some((entry) => entry.path === path);
+
+/** The four filters both audit doors narrow on (01 §12 `AuditFilters`), as the
+ *  WHERE and its bind parameters. `kind` and `venue` are real columns;
+ *  `outcome` and `decidedBy` are not — they live inside the stored event, so
+ *  they are read out of the jsonb. Every filter is optional and they AND
+ *  together, so no filter at all is the whole drawer.
+ *
+ *  ONE copy, shared by the feed and the tally: a grouped statement that spells
+ *  this WHERE its own way counts rows the feed never shows, and a reviewer
+ *  reconciling the tally against the feed has no way to tell which one lied.
+ *  Each door appends its own remaining clause (a cursor, a floor) to what comes
+ *  back. */
+function auditWhere(filters: AuditFilters): { params: unknown[]; clauses: string[] } {
+  const params: unknown[] = [];
+  const clauses: string[] = [];
+  const add = (sql: string, value: unknown): void => {
+    params.push(value);
+    clauses.push(sql.replace("?", `$${params.length}`));
+  };
+  if (filters.kind !== undefined) add("kind = ?", filters.kind);
+  if (filters.venue !== undefined) add("venue = ?", filters.venue);
+  if (filters.outcome !== undefined) add("event->>'outcome' = ?", filters.outcome);
+  if (filters.decidedBy !== undefined) add("event->>'decidedBy' = ?", filters.decidedBy);
+  return { params, clauses };
+}
+
+/** `audit.list`'s statement (01 §12 `AuditQuery`).
+ *
+ *  The ordering and the cursor are the routed `vendo_audit` door's, verbatim
+ *  (cursorMs, ORDER BY the truncated instant then id, over-fetch by one): both
+ *  doors read the same rows, so a cursor minted by one has to keep meaning the
+ *  same place in the other. */
+async function auditPage(db: Db, query: AuditQuery): Promise<AuditPage> {
+  const limit = pageLimit(query.limit);
+  const { params, clauses } = auditWhere(query);
+  if (query.cursor !== undefined) {
+    const cursor = decodeCursor(query.cursor);
+    params.push(cursor.c, cursor.i);
+    clauses.push(`(${cursorMs("at")}, id) < (${cursorMs(`$${params.length - 1}::timestamptz`)}, $${params.length})`);
+  }
+  params.push(limit + 1);
+  const result = await db.query(
+    `SELECT id, at, event FROM vendo_audit${clauses.length ? ` WHERE ${clauses.join(" AND ")}` : ""}
+     ORDER BY ${cursorMs("at")} DESC, id DESC LIMIT $${params.length}`,
+    params,
+  );
+  const page = result.rows.slice(0, limit);
+  const last = page.at(-1);
+  return {
+    // The typed events, not records: the drawer stores AuditEvents and every
+    // consumer casts a record's data straight back to one.
+    events: page.map((row) => row["event"] as AuditEvent),
+    ...(result.rows.length > limit && last
+      ? { cursor: encodeCursor(iso(last["at"]), text(last["id"])) }
+      : {}),
+  };
+}
+
+/** `audit.tally`'s statement (01 §12 `AuditTallyQuery`): the feed's WHERE plus
+ *  an inclusive floor, grouped into UTC hours and split by the two dimensions a
+ *  decision tally reads.
+ *
+ *  `date_trunc`'s 3-ARG form, like `cursorMs` and for the same reason: the
+ *  2-arg form buckets in whatever the session's TimeZone happens to be, so the
+ *  same drawer would tally into different hours on two connections. The bucket
+ *  is named in UTC because the contract says UTC.
+ *
+ *  No LIMIT and no cursor: `from` is the bound, and the answer is one row per
+ *  hour actually holding events per pair actually seen. Empty hours never
+ *  become rows — a GROUP BY answers with the groups that exist. */
+async function auditTally(db: Db, query: AuditTallyQuery): Promise<AuditTallyRow[]> {
+  const { params, clauses } = auditWhere(query);
+  params.push(query.from);
+  clauses.push(`at >= $${params.length}`);
+  const result = await db.query(
+    `SELECT date_trunc('hour', at, 'UTC') AS bucket,
+            event->>'outcome' AS outcome,
+            event->>'decidedBy' AS decided_by,
+            count(*) AS count
+       FROM vendo_audit WHERE ${clauses.join(" AND ")}
+      GROUP BY 1, 2, 3
+      ORDER BY 1, 2, 3`,
+    params,
+  );
+  // ORDER BY puts NULLs last by default, which IS the contract's order (an
+  // absent dimension sorts after every present one) — not an accident to
+  // preserve by luck. `count(*)` is a bigint and arrives as a string.
+  return result.rows.map((row) => ({
+    bucket: iso(row["bucket"]),
+    outcome: (row["outcome"] ?? null) as AuditTallyRow["outcome"],
+    decidedBy: (row["decided_by"] ?? null) as AuditTallyRow["decidedBy"],
+    count: Number(row["count"]),
+  }));
+}
+
+/** The meter's window, shared by both reads (`auditWhere`'s rule): `since` is
+ *  the inclusive floor `audit.tally` already reads its own by, and `until` is
+ *  the exclusive ceiling a closed period needs. Two doors onto one drawer that
+ *  spell an edge differently disagree about a limit, and the person on the
+ *  wrong side of it cannot tell why. */
+function usageWindow(query: { since: Date; until?: Date }): { params: unknown[]; clauses: string[] } {
+  const params: unknown[] = [query.since.toISOString()];
+  const clauses = ["at >= $1::timestamptz"];
+  if (query.until !== undefined) {
+    params.push(query.until.toISOString());
+    clauses.push(`at < $${params.length}::timestamptz`);
+  }
+  return { params, clauses };
+}
+
+/** `usage.count`'s statement (01 §12 `UsageCountQuery`): the window, the action,
+ *  and EITHER the one person or the one pool — never both, because a count
+ *  carrying both is two different numbers with one name. The pool leg is a
+ *  containment test against the keys the row was written with, which is what
+ *  makes a departed member's usage stay counted against the team it was spent
+ *  in. */
+async function usageCount(db: Db, query: UsageCountQuery): Promise<number> {
+  const { params, clauses } = usageWindow(query);
+  params.push(query.action);
+  clauses.push(`action = $${params.length}`);
+  params.push(query.subject ?? query.poolKey);
+  clauses.push(query.subject === undefined ? `$${params.length} = ANY(pool_keys)` : `subject = $${params.length}`);
+  const result = await db.query(`SELECT count(*) AS count FROM vendo_usage WHERE ${clauses.join(" AND ")}`, params);
+  return Number(result.rows[0]?.["count"]);
+}
+
+/** `usage.tally`'s statement (01 §12 `UsageTallyQuery`) — `auditTally`'s shape
+ *  over the meter: the same window grouped instead of counted once, so an
+ *  operator's "who is using this" table is one call and not a count per user.
+ *  Subjects with nothing in the window are never rows, because a GROUP BY
+ *  answers with the groups that exist. */
+async function usageTally(db: Db, query: UsageTallyQuery): Promise<UsageTallyRow[]> {
+  const { params, clauses } = usageWindow(query);
+  for (const [column, value] of [["action", query.action], ["subject", query.subject]] as const) {
+    if (value === undefined) continue;
+    params.push(value);
+    clauses.push(`${column} = $${params.length}`);
+  }
+  const result = await db.query(
+    `SELECT subject, action, count(*) AS count FROM vendo_usage
+      WHERE ${clauses.join(" AND ")} GROUP BY 1, 2 ORDER BY 1, 2`,
+    params,
+  );
+  return result.rows.map((row) => ({
+    subject: text(row["subject"]),
+    action: row["action"] as UsageTallyRow["action"],
+    count: Number(row["count"]),
+  }));
+}
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+/** A transcript row's key: the message's own id where it carries one, otherwise
+ *  a minted one. Shared by every write that lands a message, so a batch and a
+ *  single put key the same message the same way. */
+const rowIdOf = (message: unknown): string => {
+  const given = (message as { id?: unknown } | null)?.id;
+  return typeof given === "string" && given !== "" ? given : `msg_${globalThis.crypto.randomUUID()}`;
+};
+
+/**
+ * 02-store — the LOCAL backend of the StoreOps named-operation contract
+ * (core/store.ts): the 50 ops served straight off this store's own Postgres,
+ * through the EXISTING helpers — routing doors, thread rows, workspace rows, the
+ * erase cascade. Logic unchanged; what this layer adds is the atomic scope:
+ * every multi-statement verb runs inside ONE
+ * `Db.transaction()`, so the operation manifest's verb boundaries hold under
+ * a crash (F4's orphaned thread messages being the founding example).
+ */
+export function createStoreOps(
+  store: VendoStore,
+  options: { files?: FilesAdapter; workspaceOwner?: string; appSql?: EraseAppSql } = {},
+): StoreOps {
+  const db = dbFor(store);
+  /** Whose drawer a workspace verb addresses. The call names it when the mount
+   *  serves more than one user (`/user/**` is the subject's, `/orgs/<org>/**`
+   *  the org's); with no owner on the call the backend falls back to the one it
+   *  was bound to at construction — today's single-player default. */
+  const boundOwner = options.workspaceOwner ?? "user_local";
+  const ownerFor = (opts?: { owner?: string }): string => opts?.owner ?? boundOwner;
+
+  /** The helpers all speak Db but only ever call `query`, so a verb's
+   *  transaction hands them the same handle with the tx-scoped query in it. */
+  const txDb = (query: Query): Db => ({ ...db, query });
+
+  /** Blobs touched INSIDE a verb's transaction must ride the tx query: the
+   *  store-backed files adapter is a vendo_blobs row, and PGlite's single
+   *  connection queues (deadlocks) a base-handle query issued mid-transaction.
+   *  A host-wired adapter (S3) is external either way — the honest blob saga. */
+  const filesFor = (d: Db): FilesAdapter => options.files ?? storeFilesForDb(d);
+  const files = options.files ?? storeFiles(store);
+
+  const recordsDoor = (d: Db, collection: string): RecordStore =>
+    createReservedRecordStore(d, collection) ?? createRecordStore(d, collection);
+
+  /** The secrets family IS the existing vault (secrets.ts): at-rest encryption,
+   *  the dev-mode plaintext envelope and the fail-closed refusal without a key
+   *  are all its, and nothing about them is re-decided here. */
+  const secretReader = storeSecrets(store);
+  const secretWriter = secretStore(store);
+
+  /** commit id → the revision that commit superseded at `path`. Every write a
+   *  commit lands stamps the commit id as its intent, so the workspace history
+   *  rows ARE this index; a commit with no row here created the path (or wrote
+   *  the bytes it already held), and has no older version behind it. */
+  const supersededRevisions = async (owner: string, path: string): Promise<Map<string, number>> => {
+    const result = await db.query(
+      `SELECT revision, intent FROM vendo_workspace_history
+       WHERE path = $1 AND owner = $2 AND intent IS NOT NULL ORDER BY revision ASC`,
+      [path, owner],
+    );
+    return new Map(result.rows.map((row) => [text(row["intent"]), Number(row["revision"])]));
+  };
+
+  /** Reassemble one thread as its door record (shared read shape). */
+  const readThread = async (d: Db, id: string): Promise<VendoRecord | null> => {
+    const result = await d.query(
+      `SELECT t.*, ${THREAD_MESSAGES_AGGREGATE("t")} AS messages FROM vendo_threads t WHERE t.id = $1`,
+      [id],
+    );
+    return result.rows[0] ? threadRecord(threadFromRow(result.rows[0])) : null;
+  };
+
+  /** Append one message row to an existing thread: the INSERT's rows come from
+   *  a SELECT over vendo_threads, so an absent thread writes nothing (the same
+   *  structural gate as helpers/thread-messages); seq is assigned server-side. */
+  const appendMessage = async (
+    q: Query,
+    threadId: string,
+    rowId: string,
+    message: unknown,
+    now: string,
+  ): Promise<boolean> => {
+    const result = await q(
+      `INSERT INTO vendo_thread_messages (thread_id, id, seq, message, created_at, updated_at)
+       SELECT t.id, $2,
+              COALESCE((SELECT max(m.seq) + 1 FROM vendo_thread_messages m WHERE m.thread_id = t.id), 0),
+              $3::jsonb, $4, $4
+       FROM vendo_threads t WHERE t.id = $1
+       ON CONFLICT (thread_id, id) DO NOTHING
+       RETURNING thread_id`,
+      [threadId, rowId, JSON.stringify(message), now],
+    );
+    return result.rows[0] !== undefined;
+  };
+
+  /** Every message write is a thread write (same token discipline as the doors)
+   *  — and it is also how every message write TAKES THE THREAD ROW.
+   *
+   *  Call it BEFORE allocating a position, never after. `seq` has no unique
+   *  constraint, so two writers landing on one number leave the transcript
+   *  ordering by message id instead of by turn (THREAD_MESSAGES_AGGREGATE says
+   *  so). Any `max(seq) + 1` computed while this row is unheld is computed by
+   *  every concurrent writer from its own READ COMMITTED snapshot, and they all
+   *  get the same answer: measured on PostgreSQL 17, a batch append racing
+   *  `putMessage` collided on 20 of 20 rounds. Holding the row first makes the
+   *  loser block here until the winner COMMITs, so its allocation runs on a
+   *  fresh snapshot that already contains the winner's rows.
+   *
+   *  Every transcript writer therefore takes the SAME two locks in the SAME
+   *  order — thread row, then message rows — which is also why none of them can
+   *  deadlock against another. `appendThreadMessages` (helpers/rows.ts) is the
+   *  batch path's copy of this rule; keep the two honest with each other. */
+  const touchThread = async (q: Query, threadId: string, now: string): Promise<void> => {
+    await q(
+      "UPDATE vendo_threads SET updated_at = $2, revision = revision + 1 WHERE id = $1",
+      [threadId, now],
+    );
+  };
+
+  /** The batch append minus the transaction it runs in, so `turn.commit` lands
+   *  the same messages under ITS one transaction. Positions are assigned by
+   *  appendThreadMessages' own statement, under the thread row it has already
+   *  taken — reading the tail out here, before that lock, is what let two
+   *  concurrent turns claim one seq. */
+  const appendBatch = async (
+    d: Db,
+    input: { threadId: string; subject: string; messages: unknown[]; title?: string },
+  ): Promise<{ revision: string; count: number }> =>
+    await appendThreadMessages(d, {
+      ...input,
+      messages: input.messages.map((message) => ({ id: rowIdOf(message), message })),
+    });
+
+  const ops: StoreOps = {
+    // -----------------------------------------------------------------------
+    // engine — seven verbs onto the routed doors, with the per-collection
+    // policy living there; the ONE addition is the allowlist gate, which is why
+    // the audit door is still append-only and the effects door still
+    // insert-once through this family.
+    // -----------------------------------------------------------------------
+    engine: {
+      async get(collection, id) {
+        assertEngineCollection(collection);
+        return await recordsDoor(db, collection).get(id);
+      },
+      async put(collection, record) {
+        assertEngineCollection(collection);
+        return await db.transaction((q) => recordsDoor(txDb(q), collection).put(record));
+      },
+      async delete(collection, id) {
+        assertEngineCollection(collection);
+        await db.transaction((q) => recordsDoor(txDb(q), collection).delete(id));
+      },
+      async list(collection, query = {}) {
+        assertEngineCollection(collection);
+        const { watermark } = query;
+        // No watermark, no change: the newest-first door as it always was. With
+        // one, the walk goes the other way and both of its gates (indexed field,
+        // no cursor alongside) live inside watermarkPage.
+        if (watermark === undefined) return await recordsDoor(db, collection).list(query);
+        return await watermarkPage(db, collection, { ...query, watermark });
+      },
+      async claim(collection, expected, replacement) {
+        assertEngineCollection(collection);
+        return await db.transaction(async (q) => {
+          const door = recordsDoor(txDb(q), collection);
+          if (door.claim === undefined) {
+            throw new VendoError("not-implemented", `${collection} does not support claim`);
+          }
+          return await door.claim(expected, replacement);
+        });
+      },
+      async insertIfAbsent(collection, record) {
+        assertEngineCollection(collection);
+        return await db.transaction(async (q) => {
+          const door = recordsDoor(txDb(q), collection);
+          if (door.atomic === undefined) {
+            throw new VendoError("not-implemented", `${collection} does not support insertIfAbsent`);
+          }
+          return await door.atomic.insertIfAbsent(record);
+        });
+      },
+      async compareAndSwap(collection, record, expectedRevision) {
+        assertEngineCollection(collection);
+        return await db.transaction(async (q) => {
+          const door = recordsDoor(txDb(q), collection);
+          if (door.atomic === undefined) {
+            throw new VendoError("not-implemented", `${collection} does not support compareAndSwap`);
+          }
+          return await door.atomic.compareAndSwap(record, expectedRevision);
+        });
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // blobs — single-statement verbs; the store's own blob door as-is.
+    // -----------------------------------------------------------------------
+    blobs: {
+      async put(namespace, key, bytes, meta) {
+        await store.blobs(namespace).put(key, bytes, meta);
+      },
+      async get(namespace, key) {
+        return await store.blobs(namespace).get(key);
+      },
+      async delete(namespace, key) {
+        await store.blobs(namespace).delete(key);
+      },
+      async list(namespace, prefix) {
+        return await store.blobs(namespace).list(prefix);
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // transcripts
+    // -----------------------------------------------------------------------
+    transcripts: {
+      /** Thread row + full message replace in ONE transaction. */
+      async putThread(thread) {
+        const data = parseThreadData(
+          {
+            subject: thread.subject,
+            messages: thread.messages,
+            ...(thread.title === undefined ? {} : { title: thread.title }),
+          },
+          thread.id,
+        );
+        const row = await db.transaction((q) => putThreadRow(txDb(q), { id: thread.id, ...data }));
+        return threadRecord(row);
+      },
+      async getThread(id) {
+        return await readThread(db, id);
+      },
+      async listThreads(query) {
+        return await recordsDoor(db, "vendo_threads").list({
+          ...(query?.subject === undefined ? {} : { refs: { subject: query.subject } }),
+          ...(query?.limit === undefined ? {} : { limit: query.limit }),
+          ...(query?.cursor === undefined ? {} : { cursor: query.cursor }),
+        });
+      },
+      /** F4 — the delete is a cascade: thread + its message rows die together,
+       *  in ONE transaction. (threadStore.delete left the v6 message rows
+       *  behind; this verb ends that.) The harness state needs no statement of
+       *  its own since v12: it is a COLUMN on the thread row, so dropping the
+       *  row is what takes the bookmark with it. */
+      async deleteThread(id) {
+        await db.transaction(async (q) => {
+          await q("DELETE FROM vendo_thread_messages WHERE thread_id = $1", [id]);
+          await q("DELETE FROM vendo_threads WHERE id = $1", [id]);
+        });
+      },
+      async putMessage(threadId, message) {
+        const rowId = rowIdOf(message);
+        return await db.transaction(async (q) => {
+          const now = new Date().toISOString();
+          // The thread row FIRST: it is what serialises this write's position
+          // against every other transcript writer (see touchThread). An absent
+          // thread updates nothing here and is reported below, as it always was.
+          await touchThread(q, threadId, now);
+          if (!(await appendMessage(q, threadId, rowId, message, now))) {
+            // The id already holds a row (an edit), or the thread is absent.
+            const updated = await q(
+              `UPDATE vendo_thread_messages SET message = $3::jsonb, updated_at = $4, revision = revision + 1
+               WHERE thread_id = $1 AND id = $2 RETURNING thread_id`,
+              [threadId, rowId, JSON.stringify(message), now],
+            );
+            if (updated.rows[0] === undefined) {
+              throw new VendoError("not-found", `thread ${threadId} not found`);
+            }
+          }
+          const record = await readThread(txDb(q), threadId);
+          if (record === null) throw new VendoError("not-found", `thread ${threadId} not found`);
+          return record;
+        });
+      },
+      /** The batch append (design 4a): ownership is the caller's `subject`, so
+       *  no thread download precedes the write, and the answer is the thread's
+       *  new revision plus the row count — never the transcript. */
+      async appendMessages(threadId, subject, messages, opts) {
+        return await db.transaction((q) => appendBatch(txDb(q), {
+          threadId,
+          subject,
+          messages,
+          ...(opts?.title === undefined ? {} : { title: opts.title }),
+        }));
+      },
+      /** Deliberately non-idempotent: a duplicate answer id is refused loudly —
+       *  two answers are never the same answer (helpers/threads.recordAnswer). */
+      async recordAnswer(threadId, answer) {
+        const embedded = (answer as { id?: unknown } | null)?.id;
+        const answerId = typeof embedded === "string" && embedded !== ""
+          ? embedded
+          : JSON.stringify(answer);
+        const rowId = `ans_${answerId}`;
+        const message = {
+          id: rowId,
+          role: "user",
+          parts: [{ type: "data-vendo-ask-answer", data: answer }],
+        };
+        return await db.transaction(async (q) => {
+          const now = new Date().toISOString();
+          // The thread row FIRST, for the same reason putMessage does it: the
+          // position this answer takes must be allocated under that lock.
+          await touchThread(q, threadId, now);
+          if (!(await appendMessage(q, threadId, rowId, message, now))) {
+            const owned = await q("SELECT 1 FROM vendo_threads WHERE id = $1", [threadId]);
+            if (owned.rows[0] === undefined) {
+              throw new VendoError("not-found", `thread ${threadId} not found`);
+            }
+            throw new VendoError(
+              "conflict",
+              `answer ${JSON.stringify(answerId)} in thread ${threadId} was already recorded; `
+              + "an answer is never overwritten, so mint a fresh id for a new answer",
+            );
+          }
+          const record = await readThread(txDb(q), threadId);
+          if (record === null) throw new VendoError("not-found", `thread ${threadId} not found`);
+          return record;
+        });
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // harness — one conversation's continuity, held in `vendo_threads`'
+    // `harness_state` column (v12). `subject` is the thread's OWNER and every
+    // verb carries it into the WHERE, so a foreign subject reads an empty slot
+    // and writes nothing: one person can neither resume nor poison another's
+    // session by naming their thread.
+    // Every verb here is one statement, so none of them opens a transaction.
+    // -----------------------------------------------------------------------
+    harness: {
+      async get(threadId, subject) {
+        const result = await db.query(
+          "SELECT harness_state FROM vendo_threads WHERE id = $1 AND subject = $2",
+          [threadId, subject],
+        );
+        const row = result.rows[0]?.["harness_state"];
+        if (row === undefined || row === null) return null;
+        return typeof row === "string" ? (JSON.parse(row) as unknown) : row;
+      },
+      async set(threadId, subject, state) {
+        await setHarnessState(db, threadId, subject, requireJson(state, "harness state"));
+      },
+      async clear(threadId, subject) {
+        await db.query(
+          "UPDATE vendo_threads SET harness_state = NULL WHERE id = $1 AND subject = $2",
+          [threadId, subject],
+        );
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // workspace — the row helpers under a commit unit. Content staging (the
+    // blob leg for big files) happens BEFORE the transaction and is
+    // compensated by discard; the row swaps (the existing CTE, verbatim via
+    // workspaceRows.land) and the commit-ledger write share ONE transaction.
+    // -----------------------------------------------------------------------
+    workspace: {
+      async index(query) {
+        const owner = ownerFor(query);
+        const limit = pageLimit(query?.limit);
+        const params: unknown[] = [owner];
+        let where = "owner = $1";
+        if (query?.cursor !== undefined) {
+          params.push(query.cursor);
+          where += " AND path > $2";
+        }
+        params.push(limit + 1);
+        const result = await db.query(
+          `SELECT path, bytes, revision, updated_at FROM vendo_workspace_files
+           WHERE ${where} ORDER BY path ASC LIMIT $${params.length}`,
+          params,
+        );
+        const entries = result.rows.slice(0, limit).map((row) => ({
+          path: text(row["path"]),
+          bytes: Number(row["bytes"]),
+          revision: Number(row["revision"]),
+          updatedAt: iso(row["updated_at"]),
+        }));
+        return {
+          entries,
+          ...(result.rows.length > limit && entries.length > 0
+            ? { cursor: entries[entries.length - 1]!.path }
+            : {}),
+        };
+      },
+      async read(paths, opts) {
+        const owner = ownerFor(opts);
+        const rows = workspaceRows(db, files);
+        const result: Record<string, unknown> = {};
+        for (const path of paths) {
+          const bytes = await rows.read(owner, path);
+          if (bytes === undefined) continue;
+          result[path] = JSON.parse(decoder.decode(bytes));
+        }
+        return result;
+      },
+      async commit(entries, opts) {
+        const owner = ownerFor(opts);
+        const parsed = parseWorkspaceEntries(entries);
+        const body = JSON.stringify(parsed);
+        const key = opts?.idempotencyKey;
+        // The ledger row id derives from the key, so the key IS the claim — and
+        // the OWNER is part of it for the reason `IdempotencyScope`'s `tenant`
+        // is (core's store.ts): clients pick their own keys, two owners will
+        // pick the same one, and an id built from the key alone answers the
+        // second owner's commit out of the first owner's ledger row (as a
+        // replay when the bodies match, as a `conflict` when they do not).
+        // JSON, because an owner is the host's own user id in the host's own
+        // spelling and any delimiter is a character some host uses.
+        const commitId = key === undefined
+          ? `wsc_${globalThis.crypto.randomUUID()}`
+          : `wsc_key_${JSON.stringify([owner, key])}`;
+        const rows = workspaceRows(db, files);
+        // Stage: place every entry's content (inline decided, blob uploaded)
+        // before any row is touched — the saga's only non-transactional leg.
+        const prepared: Array<{ path: string; write: PreparedWrite | "unchanged" }> = [];
+        const discardAll = async (): Promise<void> => {
+          for (const staged of prepared) {
+            if (staged.write !== "unchanged") await rows.discard(staged.write);
+          }
+        };
+        let replayed: boolean | undefined;
+        try {
+          for (const entry of parsed) {
+            // A tombstone stages nothing: the removal is a row delete, and the
+            // content it removes is already stored (history keeps it).
+            if (entry.delete === true) continue;
+            prepared.push({
+              path: entry.path,
+              write: await rows.prepare(owner, entry.path, encoder.encode(JSON.stringify(entry.data))),
+            });
+          }
+          replayed = await db.transaction(async (q) => {
+            const tdb = txDb(q);
+            const ledger = createRecordStore(tdb, WORKSPACE_COMMITS);
+            // Claim the ledger row BEFORE touching any workspace row: the
+            // (collection, id) unique key is the serialization point, so of
+            // two same-key racers exactly one lands — the loser conflicts on
+            // the insert instead of applying a second, different mutation.
+            const claimed = await ledger.atomic!.insertIfAbsent({
+              id: commitId,
+              data: { body, entries: parsed as unknown as Json },
+              refs: { subject: owner, ...(key === undefined ? {} : { key }) },
+            });
+            if (claimed === null) {
+              const existing = await ledger.get(commitId);
+              return (existing?.data as { body?: unknown } | undefined)?.body === body;
+            }
+            const txRows = workspaceRows(tdb, filesFor(tdb));
+            // `null` is a guard, so only the ABSENT field stays out of the map —
+            // `get` then tells "must not exist yet" (null) from "unguarded"
+            // (undefined), which a filter on falsiness would collapse.
+            const expected = new Map<string, number | null>(
+              parsed
+                .filter((entry) => entry.expectedRevision !== undefined)
+                .map((entry) => [entry.path, entry.expectedRevision as number | null]),
+            );
+            // Strict entries compare-and-swap against the revision the caller
+            // read. A lost swap throws, so the transaction takes the whole
+            // commit back with it: a conflicting set applies none of itself and
+            // the caller re-reads once.
+            //
+            // `land` performs its own compare, so these heads serve the two
+            // strict entries that never reach it: a TOMBSTONE, and a write whose
+            // bytes already match the head. Both are still commits against a
+            // revision the caller read, and skipping their compare let a stale
+            // delete erase a colleague's newer content outright.
+            const heads = await headRevisions(tdb, owner, [...expected.keys()]);
+            const moved = (path: string): boolean => {
+              const at = expected.get(path);
+              return at !== undefined && heads.get(path) !== at;
+            };
+            const conflicts: string[] = [];
+            for (const staged of prepared) {
+              if (staged.write === "unchanged") {
+                if (moved(staged.path)) conflicts.push(staged.path);
+                continue;
+              }
+              const at = expected.get(staged.path);
+              const written = await txRows.land(
+                owner,
+                staged.write,
+                commitId,
+                at === undefined ? undefined : { strict: true, expectedRevision: at },
+              );
+              if (written.conflict === true) conflicts.push(staged.path);
+            }
+            for (const entry of parsed) {
+              if (entry.delete !== true) continue;
+              if (moved(entry.path)) {
+                conflicts.push(entry.path);
+                continue;
+              }
+              await txRows.remove(owner, entry.path, commitId);
+            }
+            if (conflicts.length > 0) {
+              throw new VendoError(
+                "conflict",
+                `the workspace moved on under ${conflicts.sort().join(", ")}; nothing was committed`,
+                { conflicts },
+              );
+            }
+            return undefined;
+          });
+        } catch (error) {
+          // Compensation: a commit that did not land releases what it staged.
+          await discardAll();
+          throw error;
+        }
+        if (replayed === undefined) return; // landed
+        // A replay never lands its staging — recorded result stands.
+        await discardAll();
+        if (!replayed) {
+          throw new VendoError(
+            "conflict",
+            `idempotency key ${JSON.stringify(key)} was already used for different entries`,
+          );
+        }
+      },
+      async history(query) {
+        const owner = ownerFor(query);
+        const path = query?.path;
+        const page = await createRecordStore(db, WORKSPACE_COMMITS).list({
+          refs: { subject: owner },
+          ...(query?.limit === undefined ? {} : { limit: query.limit }),
+          ...(query?.cursor === undefined ? {} : { cursor: query.cursor }),
+        });
+        // A path narrows the page in place, so the ledger's keyset cursor keeps
+        // meaning exactly what it meant: follow it for the next page, which may
+        // hold more of this path's commits (or none).
+        const records = path === undefined
+          ? page.records
+          : page.records.filter((record) => commitTouches(record, path));
+        // The before-revision the entry restores to. It is not in the ledger —
+        // it is the revision the write superseded, which every commit stamped
+        // with its own id as the intent when it landed.
+        const superseded = path === undefined
+          ? new Map<string, number>()
+          : await supersededRevisions(owner, path);
+        return {
+          entries: records.map((record) => ({
+            commitId: record.id,
+            entries: commitEntries(record),
+            at: record.createdAt,
+            ...(superseded.has(record.id) ? { revision: superseded.get(record.id) } : {}),
+          })),
+          ...(page.cursor === undefined ? {} : { cursor: page.cursor }),
+        };
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // audit — two verbs, both READS, because reading is all anyone does to an
+    // append-only drawer. The filters that ARE refs (subject, app, tool) are
+    // already served by engine.list("vendo_audit", { refs }); this door exists
+    // for the ones that are not. `tally` is the same WHERE grouped rather than
+    // paged: a decision tally read through `list` means shipping every row in
+    // the window across the wire to count it at the other end.
+    // -----------------------------------------------------------------------
+    audit: {
+      async list(query = {}) {
+        return await auditPage(db, query);
+      },
+      async tally(query) {
+        return await auditTally(db, query);
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // usage — the meter a host's LimitsCallback decides on. A write and the two
+    // reads it exists to serve, over `vendo_usage` (schema.ts v10). The write is
+    // here and not on `engine` because the drawer has no door: a meter row is
+    // only ever counted, so nothing lists it and nothing may name the table as a
+    // collection. Ids are minted here — the contract's event is what HAPPENED,
+    // and nothing outside this row ever refers to it.
+    // -----------------------------------------------------------------------
+    usage: {
+      async record(event) {
+        await db.query(
+          "INSERT INTO vendo_usage (id, subject, action, at, pool_keys) VALUES ($1, $2, $3, $4::timestamptz, $5)",
+          [`usg_${globalThis.crypto.randomUUID()}`, event.subject, event.action, event.at.toISOString(), event.poolKeys ?? null],
+        );
+      },
+      async count(query) {
+        return await usageCount(db, query);
+      },
+      async tally(query) {
+        return await usageTally(db, query);
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // secrets — the vault door (secrets.ts) as-is. The one seam this layer
+    // owns: the provider answers `undefined` for a name it does not hold, and
+    // the op's contract is `null`.
+    // -----------------------------------------------------------------------
+    secrets: {
+      async get(name) {
+        return (await secretReader.get(name)) ?? null;
+      },
+      async set(name, value) {
+        await secretWriter.set(name, value);
+      },
+      async list() {
+        return await secretWriter.list();
+      },
+      async delete(name) {
+        await secretWriter.delete(name);
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // retention — the two moves of a recoverable sweep, over the engine's own
+    // quarantine table (retention.ts, schema.ts v9). Host SQL on the host's own
+    // cron still works and always did (the table map is public,
+    // tests/retention.test.ts); what this family adds is the RECOVERY WINDOW a
+    // `DELETE ... WHERE at < ...` cannot express.
+    // -----------------------------------------------------------------------
+    retention: storeRetention(db),
+
+    // -----------------------------------------------------------------------
+    // lifecycle
+    // -----------------------------------------------------------------------
+    lifecycle: {
+      /** The 20-table erase saga, as-is: re-runnable, real-deletion report.
+       *  Deliberately NOT one transaction — blob deletion is external work, and
+       *  neither is dropping an app's database. */
+      async erase(target) {
+        const doors = eraseStore(store, { files, appSql: options.appSql });
+        if (target.subject !== undefined) return await doors.bySubject(target.subject);
+        if (target.appId !== undefined) return await doors.byApp(target.appId);
+        invalid("lifecycle.erase needs a subject or an appId");
+      },
+      /** §9.5 — the app row flip and the workspace document move, which the
+       *  umbrella ran as a two-step seam, are ONE transaction here, and so is
+       *  the app's bearer token. */
+      async promote(appId, orgId) {
+        await db.transaction(async (q) => {
+          const tdb = txDb(q);
+          const current = await q("SELECT subject FROM vendo_apps WHERE id = $1", [appId]);
+          const from = current.rows[0]?.["subject"];
+          if (typeof from !== "string") {
+            throw new VendoError("not-found", `App ${appId} was not found`);
+          }
+          if (from === orgId) return; // already the org's — idempotent
+          await workspaceRows(tdb, filesFor(tdb)).moveApp(
+            appId,
+            { kind: "user", subject: from },
+            { kind: "org", org: orgId },
+          );
+          // The row flip, guarded on the current subject (appStore.promote's
+          // statement): every vendo_apps write door bumps the token.
+          const flipped = await q(
+            `UPDATE vendo_apps SET subject = $3, updated_at = $4, revision = revision + 1
+             WHERE id = $1 AND subject = $2 RETURNING id`,
+            [appId, from, orgId, new Date().toISOString()],
+          );
+          if (flipped.rows[0] === undefined) {
+            throw new VendoError("conflict", `app ${appId} belongs to another subject`);
+          }
+        });
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // turn — the two envelopes, each as the ops it bundles and nothing more.
+    // The reads fan out (they are the same reads, in one call instead of five);
+    // the writes share ONE transaction, because a turn that landed its messages
+    // and lost its harness state is a turn the next one resumes wrong.
+    // -----------------------------------------------------------------------
+    turn: {
+      load: (request) => turnLoadOverOps(ops, request),
+      async commit(request) {
+        const { audit, harness } = request;
+        if (audit !== undefined) assertEngineCollection(audit.collection);
+        return await db.transaction(async (q) => {
+          const tdb = txDb(q);
+          // The thread row FIRST, the order every transcript writer takes its
+          // locks in (see touchThread).
+          const messages = await appendBatch(tdb, request.messages);
+          // AFTER the messages: `appendBatch` is what upserts the thread row a
+          // first turn has not created yet, and the slot is a column on it.
+          if (harness !== undefined) {
+            await setHarnessState(
+              tdb,
+              harness.threadId,
+              harness.subject,
+              requireJson(harness.state, "harness state"),
+            );
+          }
+          return {
+            messages,
+            ...(audit === undefined ? {} : { audit: await recordsDoor(tdb, audit.collection).put(audit.record) }),
+          };
+        });
+      },
+    },
+
+    async footprint() {
+      return await collectionFootprints(db);
+    },
+
+    async status() {
+      // All 50 of STORE_WIRE_PATHS: `ops` is a LEVEL over that list's declared
+      // order, and this engine serves the whole of it — retention, the audit
+      // tally, usage, and now the turn envelopes that ride the tail behind
+      // them. A number this engine cannot back with an op is the one thing the
+      // level must never report, so it moves WITH the object and never ahead of
+      // it.
+      return { format: VENDO_STORE_WIRE_FORMAT, ops: 50 };
+    },
+  };
+  return ops;
+}

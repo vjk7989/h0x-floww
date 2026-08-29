@@ -1,0 +1,43 @@
+---
+title: "E-AUTH-007"
+sidebarTitle: "E-AUTH-007"
+description: "Retired: doctor no longer asks the running composition whether an actAs seam is wired."
+---
+
+```text retired
+E-AUTH-007 — retired, doctor no longer emits this code
+```
+
+`error_code: E-AUTH-007` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This warning fired when the `actAs` probe reported that no seam was
+configured. Doctor reads files now and never asks the running composition
+what it wired, so it cannot tell.
+
+## The fix
+
+Read your `createVendo` call. If it has neither an `auth` preset nor a
+hand-wired `actAs`, away calls have no credential: the agent cannot act
+through your API while the user is away. Present calls are unaffected, so a
+present-only install can leave this unset.
+
+Most presets fill `actAs` for you.
+
+```ts vendo/server.ts
+import { authJs } from "@vendoai/vendo/auth/auth-js";
+import { createVendo } from "@vendoai/vendo/server";
+
+export const vendo = createVendo({ auth: authJs() });
+```
+
+## Related errors
+
+- [E-AUTH-004](/production/troubleshooting/e-auth-004) — a configured seam that fails, also retired
+- [E-WIRE-001](/production/troubleshooting/e-wire-001) — the `createVendo` wiring doctor still reads on disk

@@ -1,0 +1,65 @@
+import {
+  type ApprovalId,
+  type ApprovalRequest,
+  type AutomationId,
+  type IsoDateTime,
+  type Json,
+  RUN_STATUSES,
+  type RunId,
+  type ThreadId,
+  type TriggerSource,
+} from "@vendoai/core";
+
+/** 02-store §3 — declared once, in `@vendoai/apps/contract`. The store is a
+ *  dumb adapter for a shape app generation owns; re-declaring it here is how
+ *  the two drifted. */
+export type { AppRow } from "@vendoai/apps/contract";
+
+/** 02-store §3 */
+export interface ThreadRow {
+  id: ThreadId;
+  subject: string;
+  messages: Json[];
+  /** Precomputed listing title (03 §5); lets `list` skip loading the messages array. */
+  title?: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+  /** Opaque write counter backing the routed atomic capability (01 §12); bumped
+   *  on every write. Absent only on projections that never carry it (listSelect). */
+  revision?: string;
+}
+
+/** 02-store §3 */
+export interface ApprovalRow {
+  id: ApprovalId;
+  subject: string;
+  request: ApprovalRequest;
+  status: "pending" | "approved" | "denied";
+  decidedAt?: IsoDateTime;
+  sessionId?: string;
+  consumedAt?: IsoDateTime;
+  /** Whether a PERSON decided, or housekeeping did (abandonment, TTL sweep). */
+  deniedBy?: "human" | "system";
+  /** The decision no longer stands — taken back, or superseded by a later one. */
+  voidedAt?: IsoDateTime;
+  createdAt: IsoDateTime;
+}
+
+/** 02-store §3 */
+export interface RunRow {
+  id: RunId;
+  /** The automation that fired this run — a run has no app of its own, because
+   *  an automation record names none (core's `automation.ts`). */
+  automationId: AutomationId;
+  trigger: { kind: TriggerSource["kind"]; event?: string };
+  /** The engine's four (`RunStatus`) plus `pending-approval`, which no engine
+   *  writes: the store is the wider ACCEPTOR here, and `parseRunData` has taken
+   *  it since before the ledger dropped its waiting state. Spelled as a union
+   *  with the shared tuple so the four can never drift, and narrowing it would
+   *  be a behaviour change, not a consolidation. */
+  status: (typeof RUN_STATUSES)[number] | "pending-approval";
+  record: Json;
+  startedAt: IsoDateTime;
+  finishedAt?: IsoDateTime;
+}
+

@@ -1,0 +1,114 @@
+/**
+ * What the checking floor needs to measure an app against — and nothing else.
+ *
+ * Blueprint §7.3: the floor used to speak `GenerationDependencies`, the whole
+ * generation pipeline's dependency bag, which made `checking/` and
+ * `generation/` mutually entangled and pinned the conductor alive. A full read of
+ * this directory says the floor dereferences exactly FOUR fields, so those four
+ * are the type. `GenerationDependencies` extends it, so every conductor call site
+ * keeps working unchanged — and the floor now runs anywhere a catalog and a model
+ * exist, which is what lets it move to the paint seam.
+ */
+import type { JsonSchema } from "@vendoai/core";
+import { VENDO_APPS_SQL_TOOL } from "../doors/sql-tool.js";
+import { sqlRisk } from "../persistence/app-sql-guard.js";
+import type {
+  NormalizedCatalog,
+  VendoRouteMap,
+} from "../../contract/index.js";
+import type { LanguageModel } from "ai";
+
+/** The slice of a tool descriptor the floor (and the generation prompts) need:
+ *  prompt context, and the signature `useQuery` is type-checked against.
+ *
+ *  It lives HERE, with the floor, because the screen type check is what reads it
+ *  (`screenTypesCheck`) and a type the floor owns cannot follow the pipeline into
+ *  quarantine. The generation engine re-exports it, so its own consumers are
+ *  unaffected. */
+export interface HostToolInfo {
+  name: string;
+  description: string;
+  risk: string;
+  inputSchema?: Record<string, unknown>;
+  /** The tool's DECLARED result shape (`ToolDescriptor.outputSchema`). The
+   *  screen type check reads it directly: it is the host's own contract, and
+   *  it keeps what a sample erased — an enum field samples as a bare `string`,
+   *  so a prop that takes the enum could never be satisfied from a sample. */
+  outputSchema?: JsonSchema;
+}
+
+/** A tool that CHANGES something. The smoke-render gate stubs these with the
+ *  approval pipe's answer instead of a sample, and a component screen may not
+ *  name one in `useQuery` — a read runs on every render. It lives here with
+ *  {@link HostToolInfo}, so the two readers share one definition. */
+export const isMutatingTool = (tool: HostToolInfo | undefined): boolean =>
+  tool?.risk === "write" || tool?.risk === "destructive";
+
+/** The SAME question, asked of the STATEMENT rather than of the tool.
+ *
+ *  `vendo_apps_sql` is ONE tool over statements that read and statements that
+ *  write, so its authored grade is the pessimistic `write` — which would leave a
+ *  screen unable to load its own rows on first paint, because `useQuery` refuses
+ *  a mutating tool. The runtime already regrades every call by its statement
+ *  (`AppsRuntime.agentToolRisk` → `sqlRisk`); this asks the identical question
+ *  HERE, where a query's input is a literal written out in the file, so the
+ *  authoring surface and the running one cannot disagree about what a SELECT is.
+ *  Anything not resolvable falls back to the authored grade, which stays
+ *  pessimistic. */
+export const isMutatingQuery = (tool: HostToolInfo | undefined, input: unknown): boolean => {
+  if (tool?.name !== VENDO_APPS_SQL_TOOL) return isMutatingTool(tool);
+  const sql = (input as { sql?: unknown } | undefined)?.sql;
+  return typeof sql !== "string" || sqlRisk(sql) !== "read";
+};
+
+/**
+ * The host surface a check measures against.
+ *
+ * `model` is for the AI reviewer alone — the one check that spends a model call —
+ * and it is OPTIONAL because the floor genuinely runs without one: its
+ * deterministic checks are lookups and a compiler pass, and the paint seam calls
+ * exactly those. A modelless floor loses its judgment half the same way the
+ * reviewer loses it for any other reason it cannot judge, which is fail-open by
+ * design ("a reviewer that could not judge must never be the reason a good app
+ * dies").
+ *
+ * `AppsRuntime.validate` still refuses outright without a model, because a VERB
+ * that answers "nothing wrong" after running only half its checks is the worst lie
+ * a checker can tell. That is a door's contract, not the floor's.
+ */
+export interface FloorDependencies {
+  model?: LanguageModel;
+  /**
+   * The seat the AI REVIEWER's own call rides, when the deployment composed a
+   * cheaper one (`AppsConfig.reviewModel`).
+   *
+   * Judging a finished screen against its own rows is a reading job, not a
+   * writing one, and it is the only check that spends a model call — so it runs
+   * on the family's fast pick rather than on the model that wrote the app.
+   * Absent, it rides `model` above, exactly as it always did.
+   */
+  reviewModel?: LanguageModel;
+  /** The composition-normalized catalog (01 §14): propsJsonSchema is derived. */
+  catalog: NormalizedCatalog;
+  /** The host tools a query may name. Absent → the screen type check has no
+   *  tool signatures to type `useQuery` against. */
+  tools?: readonly HostToolInfo[];
+  /** The pages a `<Link to>` may name (`CreateVendoConfig.routes`). Absent → the
+   *  host registered no registry at all and the gauntlet's routes check stays
+   *  silent; an EMPTY registry is a registry, and refuses every link. */
+  routes?: VendoRouteMap;
+  /**
+   * The island smoke-render gate: every island renders once in a headless DOM
+   * before it ships, so a crashing island never reaches a screen. ON unless
+   * explicitly `false` — the seam the island tests run without.
+   *
+   * It lives on the FLOOR, not on the generation bag above it, because the
+   * floor is the other half that runs the gate. It was declared only on
+   * `GenerationDependencies`, so `create` honoured the switch and the floor
+   * never saw it: a host that turned the render off still paid for one on every
+   * commit, and was blocked by a gate it had disabled.
+   */
+  pipeline?: {
+    smokeRender?: boolean;
+  };
+}

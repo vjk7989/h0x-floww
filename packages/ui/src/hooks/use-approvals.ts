@@ -1,0 +1,102 @@
+/** Pending approval transport (08-ui §3). */
+import type { ApprovalDecision, ApprovalId, ApprovalRequest } from "@vendoai/core";
+import { useCallback, useSyncExternalStore } from "react";
+import { useVendoProvider } from "../context.js";
+import {
+  markRunResultsSeen,
+  subscribeRunActivity,
+  unseenRunResult,
+  type RunResult,
+} from "../chrome/run-activity.js";
+import { appsFeed } from "./apps-feed.js";
+import { APPROVALS_LOADING, approvalsFeed } from "./approvals-feed.js";
+import { type PollOptions } from "./use-resource.js";
+
+/** SSR / first-render snapshot, stable across calls. */
+const loadingSnapshot = () => APPROVALS_LOADING;
+
+export function useApprovals(options?: PollOptions): {
+  pending: ApprovalRequest[];
+  error: Error | undefined;
+  isLoading: boolean;
+  refresh(): Promise<void>;
+  decide(ids: ApprovalId | ApprovalId[], decision: ApprovalDecision, decideOptions?: { grantSetId?: string }): Promise<void>;
+} {
+  const { client } = useVendoProvider();
+  // H15 — every surface shares ONE poller per client (approvals-feed), so the
+  // launcher badge, the waiting strip, the rail and the toast feed cost one
+  // request between them instead of one each.
+  const feed = approvalsFeed(client);
+  const pollMs = options?.pollMs ?? 0;
+  const subscribe = useCallback((listener: () => void) => feed.subscribe(listener, pollMs), [feed, pollMs]);
+  const { data, error, isLoading } = useSyncExternalStore(subscribe, feed.read, loadingSnapshot);
+  const refresh = useCallback(() => feed.refresh(), [feed]);
+
+  const decide = useCallback(
+    async (ids: ApprovalId | ApprovalId[], decision: ApprovalDecision, decideOptions?: { grantSetId?: string }) => {
+      await client.approvals.decide(ids, decision, decideOptions);
+      await refresh();
+    },
+    [client, refresh],
+  );
+
+  return { pending: data, error, isLoading, refresh, decide };
+}
+
+const NO_RESULT = (): RunResult | undefined => undefined;
+/** SSR / first-render snapshot for the unseen count. */
+const NO_UNSEEN = () => 0;
+
+/** The apps cadence, matching the ask cadence: the badge and the dot ride two
+ *  different collections, and a person reads them as one signal, so they must
+ *  not be able to sit a poll apart. */
+const APPS_POLL_MS = 5_000;
+
+/**
+ * The ONE attention source. Everything that asks for the user's attention
+ * counts from here: the launcher's numbered badge, the approvals queue, and the
+ * quiet dot for a run that finished while they were elsewhere. Two surfaces
+ * reading two counts
+ * could disagree in front of the user; this is the same hook, so they can't.
+ *
+ * Everything `useApprovals` returns (rows, `decide`, `refresh`) comes through
+ * unchanged, so a surface that shows the count AND the cards needs one hook.
+ */
+export function useAttention(options?: PollOptions): ReturnType<typeof useApprovals> & {
+  /** Asks waiting on the user right now (the badge number, the queue count). */
+  askCount: number;
+  /** Alias for the rows behind that count, in the strip's own words. */
+  asks: ApprovalRequest[];
+  /** Something arrived that nobody has looked at yet (the quiet dot): a
+   *  finished run's result, or an app that has never rendered for this person. */
+  unseenResults: boolean;
+  /** How many of those are apps — the arrival half of the dot. */
+  unseenApps: number;
+  /** The finished run itself — headline + the thread to deep-link into. */
+  lastResult: RunResult | undefined;
+  /** The user looked: clears the dot (and any completion toast). */
+  markResultsSeen(): void;
+} {
+  const { client } = useVendoProvider();
+  const approvals = useApprovals(options);
+  const lastResult = useSyncExternalStore(subscribeRunActivity, unseenRunResult, NO_RESULT);
+  // Arrival — the SHARED apps feed, at this hook's own cadence. Whoever else is
+  // listing apps shares the request; nobody listing them at all (a host with no
+  // app panel) still gets a live count, which a store fed by someone else's
+  // mount could never do.
+  const feed = appsFeed(client);
+  const subscribeApps = useCallback(
+    (listener: () => void) => feed.subscribe(listener, options?.pollMs ?? APPS_POLL_MS),
+    [feed, options?.pollMs],
+  );
+  const apps = useSyncExternalStore(subscribeApps, feed.unseenCount, NO_UNSEEN);
+  return {
+    ...approvals,
+    askCount: approvals.pending.length,
+    asks: approvals.pending,
+    unseenResults: lastResult !== undefined || apps > 0,
+    unseenApps: apps,
+    lastResult,
+    markResultsSeen: markRunResultsSeen,
+  };
+}

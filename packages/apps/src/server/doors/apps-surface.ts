@@ -1,0 +1,244 @@
+/**
+ * The doors over the app RECORD itself: reading it, listing it, opening it,
+ * calling into it, its history, and the four ways a copy of it travels
+ * (fork/export/import/share/publish).
+ *
+ * Lifted out of `createApps` unchanged.
+ */
+import {
+  VendoError,
+} from "@vendoai/core";
+import {
+  refuseBundleArtifact,
+  type AppDocument,
+} from "../../contract/index.js";
+import { createAgentTools } from "./agent-tools.js";
+import { allRecords } from "./access-checks.js";
+import { appSeenStore } from "../persistence/app-seen.js";
+import { APPS_COLLECTION, appRecordInput, documentFromRecord, withoutSession } from "../persistence/persistence.js";
+import type { AppsRuntimeContext } from "../runtime/runtime-context.js";
+import type { AppsRuntime } from "../runtime/types.js";
+
+const createAppReadDoors = (
+  deps: Pick<AppsRuntimeContext,
+    "config" | "engine" | "caller" | "history" | "opener" | "owned" | "requireOwned"
+    | "grantedRecords" | "runtime">,
+): Pick<AppsRuntime, "get" | "list" | "history" | "open" | "call" | "seen"> => {
+  const { config, engine, caller, history, opener, owned, requireOwned } = deps;
+  const { grantedRecords, runtime } = deps;
+  const appSeen = appSeenStore(engine);
+  return {
+    async get(appId, ctx) {
+      const app = await owned(appId, ctx, "viewer");
+      return app === null ? null : withoutSession(app);
+    },
+
+    async list(ctx) {
+      const records = await allRecords(engine, { subject: ctx.principal.subject });
+      // Build contract §9.3 — owned ∪ granted. The grant rows already name the
+      // apps this caller reaches, so the union is one extra id fetch rather
+      // than a scan; `can()` still decides each one (a grant to a team the
+      // caller is not in this request does not match).
+      const granted = await grantedRecords(ctx, new Set(records.map((record) => record.id)));
+      records.push(...granted);
+      const documents: AppDocument[] = [];
+      for (const record of records
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))) {
+        try {
+          const document = documentFromRecord(record);
+          // A terminally failed build is a tombstone open() reads to resolve
+          // the embed — not a real app; it never joins the listable surface.
+          if (document.buildFailed !== undefined) continue;
+          documents.push(withoutSession(document));
+        } catch {
+          // Corrupt rows cannot be surfaced, but must not hide valid owned apps.
+        }
+      }
+      // Arrival — read state is the CALLER's, so it rides the answer rather
+      // than the row: one query for the whole page, on the fetch every surface
+      // already makes.
+      const unseen = await appSeen.unseen(documents.map((document) => document.id), ctx.principal.subject);
+      return documents.map((document) => unseen.has(document.id) ? { ...document, unseen: true } : document);
+    },
+
+    /**
+     * Build contract §9.3 — the level lives HERE, not only at the wire route
+     * that used to be the sole boundary: reading the log needs `viewer`, and a
+     * caller who cannot even see the app stays masked (`not-found`), exactly
+     * like every other door. The 06 §1 signature gained the ctx for this
+     * reason (wave-3 ruling).
+     */
+    history(appId, ctx) {
+      const surface = history.surface(appId);
+      return Object.freeze({
+        list: async () => {
+          await requireOwned(appId, ctx, "viewer");
+          return await surface.list();
+        },
+      });
+    },
+
+    async seen(appId, ctx) {
+      await requireOwned(appId, ctx, "viewer");
+      await appSeen.mark(appId, ctx.principal.subject);
+    },
+
+    async open(appId, ctx, options) {
+      const app = await requireOwned(appId, ctx, "viewer");
+      // Arrival deliberately does NOT mark here. This door is also how an agent
+      // reads a tree (`vendo_apps_open` through compose-mcp.ts) and how an
+      // automation resolves a surface, and neither is a person looking at a
+      // screen — marking here cleared a human's dot for an app only Claude ever
+      // saw. The person's own render route does the marking (wire/apps.ts).
+      return opener(app, ctx, options);
+    },
+
+    async call(appId, ref, args, ctx) {
+      const app = await requireOwned(appId, ctx, "viewer");
+      // A host-tool ref goes straight to the guard-bound registry; an fn: ref
+      // settles as a contained not-implemented outcome until the in-runtime
+      // fn path lands (see call.ts).
+      //
+      // A READ takes the QUERY arm. This is the only door a code-land app has
+      // (@vendoai/ui/kit's useToolQuery), so sending every call through the action
+      // arm gave a read a random uuid per invocation — and the guard's approved
+      // replay PINS the call id (05 §2), so an ungraded read that parked could
+      // never be satisfied: approve, refetch, new id, park again, forever.
+      // `callQuery` derives the id from (app, tool, args), which is exactly a
+      // query's identity. The discriminator is the tool's own authored risk
+      // grade, the server's existing classification of what a call does;
+      // everything else keeps the action arm, because two identical mutations
+      // are two separate acts and each has to earn its own approval.
+      // The RESOLVED grade, not the authored one: `vendo_apps_sql` is one tool
+      // over statements that read and statements that write, and its authored
+      // grade is the pessimistic one.
+      const descriptor = (await config.tools.descriptors(ctx).catch(() => []))
+        .find((candidate) => candidate.name === ref);
+      const risk = await runtime().agentToolRisk({ id: `call_arm_${ref}`, tool: ref, args }, ctx)
+        ?? descriptor?.risk;
+      return risk === "read"
+        ? caller.callQuery(app, ref, args, ctx)
+        : caller.call(app, ref, args, ctx);
+    },
+  };
+};
+
+const createAppCopyDoors = (
+  deps: Pick<AppsRuntimeContext, "config" | "engine" | "interchange" | "requireOwned" | "reportLifecycle">,
+): Pick<AppsRuntime, "fork" | "exportApp" | "importApp" | "share" | "publish"> => {
+  const { config, engine, interchange, requireOwned, reportLifecycle } = deps;
+  return {
+    async fork(appId, ctx) {
+      const source = await requireOwned(appId, ctx, "viewer");
+      refuseBundleArtifact(source, "forked");
+      const fork: AppDocument = {
+        ...structuredClone(source),
+        id: `app_${globalThis.crypto.randomUUID()}`,
+        forkedFrom: source.id,
+      };
+      // Lane E grant hygiene — egress approval never travels with a copy; the
+      // fork re-approves its declaration.
+      delete fork.egressApproved;
+      // The conversation belongs to the owner who had it, not to the copy: the
+      // persist already drops it (appRecordInput takes no session here), and the
+      // RETURNED document must not hand it back either.
+      await engine.put(APPS_COLLECTION, appRecordInput(fork, ctx.principal.subject, false, "seed"));
+      await reportLifecycle("fork", fork.id, ctx, { sourceAppId: source.id });
+      return withoutSession(structuredClone(fork));
+    },
+
+    async exportApp(appId, ctx) {
+      return interchange.exportApp(appId, ctx);
+    },
+
+    async importApp(source, ctx) {
+      return interchange.importApp(source, ctx);
+    },
+
+    async share(appId, ctx) {
+      const app = await requireOwned(appId, ctx, "owner");
+      refuseBundleArtifact(app, "shared");
+      if (config.cloud === undefined) {
+        throw new VendoError("cloud-required", "Vendo Cloud requires VENDO_API_KEY");
+      }
+      // Lane E grant hygiene — a share copy never carries the owner's egress
+      // approval; whoever runs the copy approves its declaration themselves.
+      // …and the brain's conversation never travels either: it is the owner's
+      // transcript, not part of the app.
+      const { egressApproved: _egressApproved, ...shared } = app;
+      return config.cloud.share(appId, withoutSession(shared));
+    },
+
+    async publish(appId, ctx) {
+      const app = await requireOwned(appId, ctx, "owner");
+      refuseBundleArtifact(app, "published");
+      if (config.cloud === undefined) {
+        throw new VendoError("cloud-required", "Vendo Cloud requires VENDO_API_KEY");
+      }
+      // Lane E grant hygiene — same rule as share: approval never travels.
+      const { egressApproved: _published, ...published } = app;
+      return config.cloud.publish(appId, withoutSession(published));
+    },
+  };
+};
+
+/** The app-record slice of `AppsRuntime`. */
+export const createAppsSurface = (
+  deps: Pick<AppsRuntimeContext,
+    "config" | "engine" | "caller" | "sql" | "history" | "opener" | "interchange"
+    | "parkedActions" | "parkedBuilds" | "placementRows" | "owned" | "requireOwned"
+    | "grantedRecords" | "reportLifecycle" | "claimSlot" | "markUnbuilt" | "buildingFor"
+    | "runtime">,
+): Pick<AppsRuntime,
+  "get" | "list" | "delete" | "fork" | "share" | "publish" | "seen"
+  | "exportApp" | "importApp" | "history" | "open" | "call" | "agentTools"> => {
+  const { config, engine, sql, history } = deps;
+  const { parkedActions, parkedBuilds, placementRows } = deps;
+  const { requireOwned, reportLifecycle, claimSlot, markUnbuilt, buildingFor, runtime } = deps;
+  return {
+    ...createAppReadDoors(deps),
+    ...createAppCopyDoors(deps),
+    async delete(appId, ctx) {
+      await requireOwned(appId, ctx, "owner");
+      // The app's whole database goes with the app — one schema (BYO) or one
+      // edge database (Cloud), and every person's `mine.` tables inside it.
+      await sql?.drop(appId);
+      await history.clear(appId);
+      await parkedActions.clearForApp(appId);
+      await parkedBuilds.clearForApp(appId);
+      await engine.delete(APPS_COLLECTION, appId);
+      // The app's workspace documents and the blobs behind them. Everything
+      // above this line clears a drawer this package owns; `/user/apps/<id>/…`
+      // and `/orgs/<org>/apps/<id>/…` belong to the WORKSPACE, and only the
+      // store's own cascade can reach the blobs those rows point at (a `rm`
+      // leaves them: history is append-only and becomes the pointer). Called
+      // after the row so the cascade's own "app row first, then its data" order
+      // is preserved — `eraseAppData` needs no app row and re-deleting an absent
+      // one is a zero-count no-op.
+      await config.ops?.lifecycle.erase({ appId });
+      // A deleted app can never mount again, so its placement rows are dead
+      // weight — and a row with no app record reads as a build in flight, which
+      // would park a skeleton in the slot until the build window elapsed and
+      // then a failure card over the host's own markup. Swept by APP, not by
+      // the deleter's subject: a shared app sits in slots belonging to people
+      // the deleter cannot enumerate, and those pages are the ones that would
+      // be left holding it.
+      await placementRows.clearForApp(appId);
+      // Every person's read state for an id that can never come back.
+      await appSeenStore(engine).clearForApp(appId);
+      await reportLifecycle("delete", appId, ctx);
+    },
+
+    agentTools() {
+      return createAgentTools(runtime(), {
+        ...(sql === undefined ? {} : { sql }),
+        requireOwned,
+        buildingFor,
+        claimSlot,
+        markUnbuilt,
+        ...(config.screen === undefined ? {} : { screen: config.screen }),
+        ...(config.automations === undefined ? {} : { automations: config.automations }),
+      });
+    },
+  };
+};

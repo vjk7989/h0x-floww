@@ -1,0 +1,42 @@
+---
+title: "E-DEP-002"
+sidebarTitle: "E-DEP-002"
+description: "Retired: doctor no longer reads the running wire, so it cannot compare its version against the CLI."
+---
+
+```text retired
+E-DEP-002 — retired, doctor no longer emits this code
+```
+
+`error_code: E-DEP-002` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code caught a split-brain install: the running wire served one
+`@vendoai/vendo` version and the CLI was on another. Doctor read the wire's
+version from the live `/status` route. Doctor now only checks what is on
+disk, so there is no second version to compare against.
+
+## The fix
+
+The split-brain install is still real, and you check it yourself now:
+
+```bash
+npm ls @vendoai/vendo
+npx vendo --version
+```
+
+If `npm ls` shows a version your CLI is not on, install the matching one, or
+drop the direct `@vendoai/vendo` dependency from `package.json` and let the
+`vendoai` umbrella provide it. Reinstall after either change.
+
+## Related errors
+
+- [E-WIRE-011](/production/troubleshooting/e-wire-011) — a different split-brain, between the `vendoai` alias and its nested copy
+- [E-DEP-001](/production/troubleshooting/e-dep-001) — the `ai` package peer-version check, still run on disk
+- [E-DEP-003](/production/troubleshooting/e-dep-003) — the `zod` version check, still run on disk

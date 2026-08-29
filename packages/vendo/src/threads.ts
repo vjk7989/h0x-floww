@@ -1,0 +1,338 @@
+/**
+ * The thread LIFECYCLE — ids, ownership, the listing title, the guarded write.
+ *
+ * It lived in `@vendoai/agent` until that package was deleted, and it lands here
+ * rather than in the store because a `Thread` carries ai's `UIMessage`: the store
+ * block deliberately has no `ai` dependency. Its one consumer is the harness turn
+ * door (`harness-turn.ts`), which resolves, persists and evicts through it.
+ */
+import { isAgentContextText, VendoError, type IsoDateTime, type RunContext, type StoreAdapter, type ThreadId, type VendoRecord } from "@vendoai/core";
+import type { UIMessage } from "ai";
+
+const THREAD_COLLECTION = "vendo_threads";
+const THREAD_ID_PATTERN = /^thr_.+$/;
+
+/** Whether `resolve` will accept this id at all. Exported for the caller that
+ *  batches a turn's opening reads: it addresses the thread BEFORE `resolve`
+ *  sees it, and a malformed id must still cost a refusal rather than a read. */
+export const isThreadId = (id: string): boolean => THREAD_ID_PATTERN.test(id);
+
+/** 03-agent §5. Exported for the caller that batches a turn's opening reads: it
+ *  has to name the thread before it can ask for it, and a turn with no id yet
+ *  is still a turn with a workspace to read. */
+export function mintThreadId(): ThreadId {
+  return `thr_${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
+}
+
+/** 03-agent §5 */
+export interface Thread {
+  id: ThreadId;
+  subject: string;
+  messages: UIMessage[];
+  /** Precomputed listing title. Persisted beside the thread so `list` need not load the
+   *  full messages array to derive it; absent on legacy rows (derived from messages then). */
+  title?: string;
+  /** The store's concurrency token for this row, as READ. Carried so the turn
+   *  that resolved the thread can compare-and-swap on it directly instead of
+   *  re-reading the whole row (and its transcript) for a token it already had.
+   *  Absent on a thread that has never been written. */
+  revision?: string;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+}
+
+/** 03-agent §5 */
+export interface ThreadSummary {
+  id: ThreadId;
+  title: string;
+  updatedAt: IsoDateTime;
+}
+
+/** Reconstruct a Thread from a store record. The store seam (core §12) carries
+ *  the id + timestamps on the VendoRecord envelope and the reserved
+ *  vendo_threads routing projects `data` down to `{ subject, messages }` (02
+ *  §2) — so the whole Thread is never inside `data`. Read it back from the
+ *  envelope, not from `data`. */
+function threadFromRecord(record: VendoRecord): Thread | null {
+  if (!THREAD_ID_PATTERN.test(record.id)) return null;
+  // Timestamps ride the envelope, but a hand-written row (threadStore(store).put
+  // accepts any Json) could still be malformed — validate before trusting them so
+  // one bad row cannot brick the whole listing.
+  if (typeof record.createdAt !== "string" || typeof record.updatedAt !== "string") return null;
+  const data = record.data;
+  if (typeof data !== "object" || data === null) return null;
+  const candidate = data as { subject?: unknown; messages?: unknown; title?: unknown };
+  if (typeof candidate.subject !== "string" || !Array.isArray(candidate.messages)) return null;
+  return {
+    id: record.id,
+    subject: candidate.subject,
+    messages: candidate.messages as UIMessage[],
+    ...(typeof candidate.title === "string" ? { title: candidate.title } : {}),
+    // The token rides the envelope beside the timestamps, and dropping it here
+    // is what made every persist re-read the row it had just been handed.
+    ...(typeof record.revision === "string" ? { revision: record.revision } : {}),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+  };
+}
+
+function titleFor(thread: Thread): string {
+  // A persisted title short-circuits the message scan (and the listing skips loading the
+  // messages array entirely once a title exists — routing.ts).
+  if (typeof thread.title === "string" && thread.title.trim()) return thread.title.slice(0, 80);
+  return deriveTitle(thread.messages);
+}
+
+/** The listing title for a transcript. Exported because a turn that APPENDS
+ *  (rather than rewriting the thread through `persist`) still has to carry a
+ *  freshly-derived title along with the write — deriving it stays client-side,
+ *  where the message shapes are understood. */
+export function deriveTitle(messages: UIMessage[]): string {
+  // Messages come from a Json array (parseThreadData accepts any shape), so a
+  // message may lack an iterable `parts` or carry non-text parts — tolerate both,
+  // skipping rather than throwing.
+  for (const message of messages) {
+    if (message === null || typeof message !== "object") continue;
+    if ((message as { role?: unknown }).role !== "user") continue;
+    const parts = (message as { parts?: unknown }).parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      if (part !== null && typeof part === "object"
+        && (part as { type?: unknown }).type === "text"
+        && typeof (part as { text?: unknown }).text === "string") {
+        const title = (part as { text: string }).text.trim();
+        // A hidden agent-context part is text the model reads and a person never
+        // sees (01-core's AGENT_CONTEXT_MARK), so it is not this thread's name:
+        // a connect card's "Not now" answer listed in the rail as
+        // "[vendo:context] Declined to connect Gmail." Skip it and keep looking.
+        if (isAgentContextText(title)) continue;
+        return title ? title.slice(0, 80) : "New thread";
+      }
+    }
+  }
+  return "New thread";
+}
+
+function toSummary(thread: Thread): ThreadSummary {
+  return { id: thread.id, title: titleFor(thread), updatedAt: thread.updatedAt };
+}
+
+/** Serialize to plain JSON so the value satisfies the store seam's `Json` type
+ *  (drops explicit `undefined`-valued props that JSON.stringify would omit). */
+function toPlainJson(messages: UIMessage[]): UIMessage[] {
+  return JSON.parse(JSON.stringify(messages)) as UIMessage[];
+}
+
+// ENG-310 / kill-list B5: how many times persist re-reads and re-merges after
+// losing a CAS race. Each retry starts from the freshly-read row, so a loss
+// only recurs while OTHER writers keep landing between our read and our
+// guarded write.
+const MAX_PERSIST_ATTEMPTS = 5;
+
+/** ENG-310: fold this turn's messages into the CURRENT persisted history —
+ *  upsert by message id (same identity rule as the in-stream upsertMessage),
+ *  so two concurrent turns on one thread both survive: shared history is
+ *  updated in place, each turn's new messages are appended. */
+function mergeMessages(current: UIMessage[], turn: UIMessage[]): UIMessage[] {
+  const merged = [...current];
+  for (const message of turn) {
+    const index = merged.findIndex((candidate) => candidate.id === message.id);
+    if (index === -1) merged.push(message);
+    else merged[index] = message;
+  }
+  return merged;
+}
+
+/** 03-agent §5 */
+export class ThreadRepository {
+  // kill-list B5: threads live ONLY in the store, through the adapter seam —
+  // no SQL, so a hosted store serves the lifecycle too, and there is no
+  // separate in-memory branch here to keep behavior-parity with.
+  constructor(private readonly store: StoreAdapter) {}
+
+  async resolve(
+    id: ThreadId | undefined,
+    ctx: RunContext,
+    /** The row this id reads to, when the caller ALREADY read it (the turn
+     *  envelope reads it beside the workspace index). `null` is a read absence,
+     *  the same answer the read below would have given — so it is `undefined`,
+     *  not `null`, that means "nobody read it yet". */
+    prefetched?: VendoRecord | null,
+  ): Promise<Thread> {
+    if (id === undefined) return this.create(ctx);
+    if (!THREAD_ID_PATTERN.test(id)) {
+      throw new VendoError("validation", "threadId is malformed");
+    }
+    // ONE ownership-blind read is the friendly fast-path (03 §5). vendo_threads is
+    // keyed by the bare id, so a foreign row reads as non-null here; reusing the id
+    // would let persist() take it over. Free id → create; ours → return; anyone
+    // else's (or unparseable) → conflict. The store's guarded upsert is the real,
+    // atomic guarantee — this only surfaces the conflict early with a clear error.
+    // Ephemeral principals resolve through this exact path too (no overlay,
+    // ordinary rows under their subject) — nothing here is BYO-specific.
+    const record = prefetched === undefined ? await this.store.records(THREAD_COLLECTION).get(id) : prefetched;
+    if (record === null) return this.create(ctx, id);
+    const thread = threadFromRecord(record);
+    if (thread !== null && thread.subject === ctx.principal.subject) return thread;
+    throw new VendoError("conflict", "threadId is already in use");
+  }
+
+  async get(id: ThreadId, ctx: RunContext): Promise<Thread | null> {
+    if (!THREAD_ID_PATTERN.test(id)) return null;
+    // Reserved vendo_threads rows are keyed by the bare thread id (02 §2:
+    // `id` is the thread id). Subject scoping is enforced here, on read, by
+    // checking the row's subject — never returning another subject's thread.
+    const record = await this.store.records(THREAD_COLLECTION).get(id);
+    if (!record) return null;
+    const thread = threadFromRecord(record);
+    if (!thread || thread.subject !== ctx.principal.subject) return null;
+    return thread;
+  }
+
+  async list(ctx: RunContext): Promise<ThreadSummary[]> {
+    const records = await this.listRecords({ subject: ctx.principal.subject });
+    const threads = records
+      .map(threadFromRecord)
+      .filter((thread): thread is Thread => thread !== null && thread.subject === ctx.principal.subject);
+    return threads
+      .map(toSummary)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  async delete(id: ThreadId, ctx: RunContext): Promise<void> {
+    if (!THREAD_ID_PATTERN.test(id)) return;
+    // The bare id is shared across subjects; delete only after confirming the
+    // row belongs to this subject (get() returns null otherwise), so one
+    // subject can never delete another's thread (03 §5).
+    const existing = await this.get(id, ctx);
+    if (existing === null) return;
+    await this.store.records(THREAD_COLLECTION).delete(id);
+  }
+
+  async persist(
+    thread: Thread,
+    messages: UIMessage[],
+    /** `fresh: true` = the caller JUST resolved this id to no row (sub-1s
+     *  shipment): the first attempt goes straight to `insertIfAbsent` instead
+     *  of re-reading the absence — one fewer round-trip on every first turn.
+     *  A row that appeared in between makes the insert lose, and the ordinary
+     *  read-merge-write loop below takes over; the guarantee never moved. */
+    opts?: { fresh?: boolean },
+  ): Promise<void> {
+    // ai-SDK UIMessages carry explicit `undefined`-valued optional props on
+    // tool parts (e.g. an approval-requested part with no output yet). The
+    // store seam is typed `Json` and rejects `undefined` values, so serialize
+    // to plain JSON — dropping absent-anyway keys — before it crosses.
+    const turnMessages = toPlainJson(messages);
+    const records = this.store.records(THREAD_COLLECTION);
+    // Guarded write via the store's atomic capability (01 §12 / 02-store §4):
+    // insert-if-absent for a first turn, revision CAS for an existing row —
+    // exactly one concurrent writer lands per attempt; the loser re-reads and
+    // re-merges (ENG-310 / AGENT-9: two overlapping turns on one thread each
+    // finish with their OWN copy of the history, so persist is read-merge-write,
+    // never a blind overwrite). No fallback: v2 has no adapter or row that
+    // predates the capability (kill-list B5 — same reasoning as the crypto v1
+    // cut), so an adapter that omits `atomic` fails closed rather than risking
+    // a lost update under concurrent writers.
+    const atomic = records.atomic;
+    if (atomic === undefined) {
+      throw new VendoError(
+        "not-implemented",
+        "thread persistence needs a store with atomic record claims (02-store §4); this adapter omits the capability",
+      );
+    }
+    for (let attempt = 0; attempt < MAX_PERSIST_ATTEMPTS; attempt += 1) {
+      // The first attempt writes on what the CALLER already read: `fresh` is a
+      // read absence (insert), and a carried `revision` is a read row whose
+      // messages and token are both in hand. Either way the row is not fetched
+      // twice for one turn. A later attempt lost a race, so it must re-read.
+      const carried = attempt === 0 && opts?.fresh !== true ? thread.revision : undefined;
+      const record = attempt === 0 && (opts?.fresh === true || carried !== undefined)
+        ? null
+        : await records.get(thread.id);
+      const current = carried !== undefined ? thread : record === null ? null : threadFromRecord(record);
+      const revision = carried ?? record?.revision;
+      if (current !== null && current.subject !== thread.subject) {
+        // Mirror the door's guarded upsert (03 §5): never take over a foreign row.
+        throw new VendoError("conflict", "threadId is already in use");
+      }
+      const updated = this.updatedThread(
+        thread,
+        current === null ? turnMessages : mergeMessages(current.messages, turnMessages),
+      );
+      const input = { id: updated.id, data: updated, refs: { subject: updated.subject } };
+      const written = current === null
+        ? await atomic.insertIfAbsent(input)
+        : await atomic.compareAndSwap(input, revision!);
+      if (written !== null) return;
+    }
+    throw new VendoError(
+      "conflict",
+      `thread ${thread.id} persist lost the update race ${MAX_PERSIST_ATTEMPTS} times`,
+    );
+  }
+
+  /** The Thread as it should be written for this turn: merged messages, a
+   *  freshly-derived listing title (never a stale prior title — `list` reads it
+   *  back without loading messages), and a new updatedAt. */
+  private updatedThread(thread: Thread, messages: UIMessage[]): Thread {
+    // Spelled out rather than spread: `revision` is the ENVELOPE's token, and
+    // this value becomes the row's `data`. The write carries the token as the
+    // compare-and-swap argument, never as a field inside what it writes.
+    return {
+      id: thread.id,
+      subject: thread.subject,
+      messages,
+      title: deriveTitle(messages),
+      createdAt: thread.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  // create() never writes: it hands back a fresh, not-yet-persisted Thread.
+  // The first persist() call is what puts the row in the store — same for
+  // every composition, so a get()/list() before that first persist correctly
+  // sees nothing yet, exactly as a store-backed agent always has.
+  private create(ctx: RunContext, requestedId?: ThreadId): Thread {
+    const now = new Date().toISOString();
+    return {
+      id: requestedId ?? mintThreadId(),
+      subject: ctx.principal.subject,
+      messages: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  /** AGENT-11 / ENG-237: drop a subject's threads from the store on session
+   *  eviction. Store-backed: a no-op — the store's own TTL sweep already erased
+   *  the rows (02-store §4 erase cascade) before the umbrella calls this, so the
+   *  list below simply finds none. Internal-default (no `store` configured):
+   *  the ONLY place those rows get reclaimed, since nothing else sweeps them.
+   *  Returns the evicted thread ids so callers can release any per-thread state
+   *  keyed by id (ENG-252 loadouts) — otherwise a reused `thr_*` id would inherit
+   *  the evicted thread's searched-in tools. */
+  async evictSubject(subject: string): Promise<ThreadId[]> {
+    const records = await this.listRecords({ subject });
+    const ids = records.map((record) => record.id as ThreadId);
+    await Promise.all(ids.map((id) => this.store.records(THREAD_COLLECTION).delete(id)));
+    return ids;
+  }
+
+  /** Follows the store's pagination cursor to exhaustion (it pages at 100) —
+   *  otherwise a subject's >100th thread, possibly their most recently active,
+   *  would silently vanish from `list`/`evictSubject`. */
+  private async listRecords(refs: Record<string, string>): Promise<VendoRecord[]> {
+    const records: VendoRecord[] = [];
+    let cursor: string | undefined;
+    do {
+      const result = await this.store.records(THREAD_COLLECTION).list({
+        refs,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      records.push(...result.records);
+      cursor = result.cursor;
+    } while (cursor !== undefined);
+    return records;
+  }
+}

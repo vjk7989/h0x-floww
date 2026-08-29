@@ -1,0 +1,37 @@
+---
+title: "E-AUTH-008"
+sidebarTitle: "E-AUTH-008"
+description: "Retired: doctor no longer sends a synthetic principal to your actAs seam."
+---
+
+```text retired
+E-AUTH-008 — retired, doctor no longer emits this code
+```
+
+`error_code: E-AUTH-008` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This warning fired when a configured `actAs` seam declined doctor's
+synthetic test principal. Doctor sends no principal now, so the seam is
+never asked.
+
+## The fix
+
+Nothing to do for the warning itself. It was usually expected: a
+`subject → user` resolver that only mints for real users is right to refuse
+a synthetic subject.
+
+What still matters is that the seam accepts your real subjects. Trigger one
+real away action and read the dev server log. If the decline names a missing
+secret, set it (`AUTH_SECRET`, or the preset's documented variable).
+
+## Related errors
+
+- [E-AUTH-004](/production/troubleshooting/e-auth-004) — a mint that fails instead of declining, also retired
+- [E-AUTH-007](/production/troubleshooting/e-auth-007) — no seam configured at all, also retired

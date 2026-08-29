@@ -1,0 +1,191 @@
+[
+  {
+    "id": "tracking-plan-table",
+    "lane": "screen",
+    "prompt": "Show me our whole tracking plan as one table: every event, its category, how many times it fired in the last 7 days and in the last 30, and when we last saw it. Make the unverified events and anything that has not fired in a week impossible to miss.",
+    "pass": [
+      "lists all thirteen events the tool returned, one row each",
+      "each event's 7-day and 30-day fire counts match the tool exactly",
+      "marks both unverified events — sidebar_collapsed and old_pricing_toggle — differently from the live ones",
+      "flags the three events with zero fires in the last 7 days: csv_import_finished, old_pricing_toggle and legacy_signup_v1",
+      "app_opened is presented as the busiest event"
+    ],
+    "tags": ["display"],
+    "shape": "table"
+  },
+  {
+    "id": "event-detail",
+    "lane": "screen",
+    "prompt": "Open up checkout_started for me: its fire counts, how many unique users are behind them, and the breakdown by plan, source and country. Put a way to deprecate the event on the page, with a box for the reason.",
+    "pass": [
+      "shows checkout_started's own numbers from the event list: 962 fires in the last 7 days, 4,010 in the last 30, 918 unique users",
+      "groups the property breakdown under plan, source and country, with every value's count from the tool",
+      "shows a deprecate control and a field for the reason on the same screen",
+      "pressing deprecate calls the write tool with name \"checkout_started\" and the reason that was typed"
+    ],
+    "tags": ["action"],
+    "shape": "detail"
+  },
+  {
+    "id": "onboarding-funnel",
+    "lane": "screen",
+    "prompt": "Draw the New workspace onboarding funnel step by step — how many people reach each step and what share of the step above it that is — and call out the step where we lose the most people.",
+    "pass": [
+      "shows all five steps in funnel order, widest at the top",
+      "each step's user count matches the tool exactly: 5,604 then 4,062 then 1,424 then 536 then 414",
+      "names 'Created a workspace' as the step with the biggest drop-off"
+    ],
+    "tags": ["display"],
+    "shape": "chart"
+  },
+  {
+    "id": "retention-grid",
+    "lane": "screen",
+    "prompt": "Build me the weekly retention grid for our signup cohorts: one row per cohort, one column per week since signup, shaded so I can see the fall-off. Weeks that have not finished yet should read blank, not 0%.",
+    "pass": [
+      "one row per cohort — six rows, Jun 22 through Jul 27 — and a column per week",
+      "every percentage shown matches the tool exactly",
+      "cells the tool returned as null are blank rather than 0%",
+      "the Jul 27 cohort's 52.6% week-1 retention reads as the strongest of the six cohorts"
+    ],
+    "tags": ["display"],
+    "shape": "table"
+  },
+  {
+    "id": "activity-with-alert-marks",
+    "lane": "screen",
+    "prompt": "Chart daily active users for the last two weeks and mark the days an alert triggered on top of it — I want to see whether our alerts line up with the dips.",
+    "pass": [
+      "draws a chart with one point per day for all 14 days the tool returned",
+      "names the three days alerts triggered on — Aug 6, Aug 9 and Aug 11 — beside the chart, and no other day",
+      "the four weekend days (Aug 1, Aug 2, Aug 8, Aug 9) read as the lowest points",
+      "names the busiest day, Aug 10, in the screen's own copy rather than only on an axis"
+    ],
+    "tags": ["display"],
+    "shape": "chart"
+  },
+  {
+    "id": "morning-dashboard",
+    "lane": "screen",
+    "prompt": "Give me my morning dashboard on one screen: active users on the latest day we have data for, new signups over the last 7 days, the onboarding funnel's conversion, how many alerts are firing right now, and our biggest segment by revenue.",
+    "pass": [
+      "shows five labelled metrics, one for each thing asked for",
+      "the latest day's active users reads 12,480 and is labelled Aug 11",
+      "new signups over the last 7 days totals 1,502",
+      "the firing-alert count is 3, not 5",
+      "names Paid teams as the biggest segment by revenue at $63,180.00"
+    ],
+    "tags": ["display"],
+    "shape": "dashboard"
+  },
+  {
+    "id": "alert-triage",
+    "lane": "screen",
+    "prompt": "Show me the alerts that are firing right now, worst first, and let me acknowledge one with a note about what I found.",
+    "pass": [
+      "shows only the three firing alerts, neither the acknowledged nor the resolved one",
+      "each firing alert shows its event, how far off it ran, and the day it triggered",
+      "the two high-severity alerts sit above the medium one",
+      "an acknowledge control takes a note and calls the write tool with the id of the alert it sits on"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "quiet-alert-board",
+    "lane": "screen",
+    "prompt": "Show me the alerts that are firing right now, worst first.",
+    "pass": [
+      "says nothing is firing rather than showing an empty table",
+      "invents no alerts",
+      "offers no acknowledge control"
+    ],
+    "tags": ["display"],
+    "shape": "empty-state",
+    "data": { "list_alerts": { "data": [] } }
+  },
+  {
+    "id": "new-segment-form",
+    "lane": "screen",
+    "prompt": "I need a form to create a segment — a name and the definition — with the segments we already have listed underneath, definitions included, so I do not build a duplicate.",
+    "pass": [
+      "the form has a name field and a definition field",
+      "lists all five existing segments with their definitions and user counts from the tool",
+      "submitting calls the create tool with exactly the name and definition that were typed",
+      "invents no segment that the tool did not return"
+    ],
+    "tags": ["action"],
+    "shape": "form"
+  },
+  {
+    "id": "retire-unused-events",
+    "lane": "screen",
+    "prompt": "Before I clean up the tracking plan: which events is nothing using — no funnel step, no segment, no alert? List those with how much they still fire, and give me one button that deprecates all of them at once, with a confirmation first.",
+    "pass": [
+      "lists exactly the three events nothing references: sidebar_collapsed, old_pricing_toggle and legacy_signup_v1",
+      "does not list csv_import_finished, which the Import-first accounts segment is built on",
+      "shows each listed event's 7-day fire count, so sidebar_collapsed's 9,402 is visible",
+      "one control deprecates all three, and it asks for confirmation before any call fires",
+      "the confirmation names all three events it would deprecate — sidebar_collapsed, old_pricing_toggle and legacy_signup_v1"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "segment-rule-builder",
+    "lane": "screen",
+    "prompt": "I want a segment builder where I can stack rules against our events — pick an event, a property, a value — chain them with AND or OR, and see how many people match before I save it.",
+    "pass": [
+      "a rule is built by picking an event, then a property, then a value, all from the tool's rows — picking checkout_started leaves plan, source and country as its properties",
+      "a second rule can be added and joined to the first with AND or OR, without leaving the screen",
+      "the matching-people count shown before saving is one the tool returned — checkout_started plan is pro reads 1,386 people",
+      "a name field and a save control sit with the rules, so the segment is named and saved without leaving the builder",
+      "invents no event, property or value the tool did not return"
+    ],
+    "tags": ["action"],
+    "shape": "filter-builder",
+    "source": "Amplitude — Create/Modify Segment, https://amplitude.com/docs/analytics/charts/build-charts-modify-user-segment; PostHog — Cohorts, https://posthog.com/docs/data/cohorts"
+  },
+  {
+    "id": "workspace-roles",
+    "lane": "screen",
+    "prompt": "Show me who's on this workspace, what role each person has, and let me change someone's role between viewer, editor and admin.",
+    "pass": [
+      "lists all five members with the role beside each: one admin, two editors, two viewers",
+      "shows Ines Vogel as invited, with a blank last-active rather than a date",
+      "each member's role sits in a control offering viewer, editor and admin, not plain text",
+      "changing a member's role calls the write tool with that member's id and the role that was picked"
+    ],
+    "tags": ["action"],
+    "shape": "permissions",
+    "source": "Amplitude — Roles & Permissions, https://amplitude.com/docs/admin/account-management/role-based-access-controls-rbac; PostHog — Access control, https://posthog.com/docs/settings/access-control"
+  },
+  {
+    "id": "post-open-paths",
+    "lane": "screen",
+    "prompt": "Show me the paths people actually take after they open the app — the branching tree of what they do next and next after that — so I can see where they wander off before converting.",
+    "pass": [
+      "roots the tree at app_opened and hangs all five next events off it, onboarding_step_viewed's 4,980 the largest branch",
+      "the branches that go further — onboarding_step_viewed and pricing_page_viewed — nest their own children under them rather than sitting in one flat list",
+      "every count and share is the tool's: pricing_page_viewed 2,090 at 12.4%, then checkout_started 742 at 35.5% of it",
+      "shows drop-off as its own branch at each level, so the 2,552 people who leave after onboarding_step_viewed are visible"
+    ],
+    "tags": ["display"],
+    "shape": "tree",
+    "source": "Amplitude — Pathfinder, https://amplitude.com/docs/analytics/charts/legacy-charts/legacy-charts-pathfinder; PostHog — Paths, https://posthog.com/docs/product-analytics/insights"
+  },
+  {
+    "id": "pricing-experiment",
+    "lane": "screen",
+    "prompt": "We're running a pricing-page experiment — put the control and the variant side by side: signups, conversion rate, revenue, and whether the difference is significant yet.",
+    "pass": [
+      "puts Control and Annual-first pricing side by side, the same metrics on each",
+      "every number is the tool's: Control 4,210 users, 261 signups, 6.2%, $12,840.00 — Annual-first 4,188 users, 310 signups, 7.4%, $15,960.00",
+      "shows Annual-first's 19.4% lift over Control, and no lift on Control itself",
+      "says the difference is not significant yet rather than calling Annual-first the winner"
+    ],
+    "tags": ["display"],
+    "shape": "comparison",
+    "source": "Amplitude — Experiment Analysis view, https://amplitude.com/docs/feature-experiment/analysis-view; PostHog — Experiments, https://posthog.com/docs/experiments/analyzing-results"
+  }
+]

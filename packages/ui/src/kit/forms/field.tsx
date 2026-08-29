@@ -1,0 +1,55 @@
+/** Shared field chrome (label + hint/error) for Kit form controls. */
+import { Field } from "@base-ui/react/field";
+import { useId, type PropsWithChildren, type ReactNode } from "react";
+import { font, t, type KitStyled } from "../tokens.js";
+
+export function useFieldIds(prefix: string): { fieldId: string; helpId: string } {
+  const id = useId().replace(/:/g, "");
+  return { fieldId: `vendo-${prefix}-${id}`, helpId: `vendo-${prefix}-${id}-help` };
+}
+
+export interface FieldShellProps extends KitStyled {
+  fieldId: string;
+  helpId: string;
+  label?: string;
+  /** The help line: a sentence, or Kit marks composed into one. */
+  hint?: ReactNode;
+  error?: string;
+  /** Render as a row (checkbox) rather than a stacked label. */
+  inline?: boolean;
+  labelNode?: ReactNode;
+}
+
+export function FieldShell({ fieldId, helpId, label, hint, error, inline, style, children }: PropsWithChildren<FieldShellProps>) {
+  const message = error ?? hint;
+  return (
+    // A Base UI Field, not a bare div: it is the context through which a
+    // control REGISTERS with the Form above it. Without it a submit validates
+    // nothing and focuses nobody — the whole point of the Form migration. The
+    // ids stay explicit, so the controls that are still native (Select,
+    // Textarea, Checkbox) keep the label wiring they already had.
+    <Field.Root
+      data-kit-field=""
+      style={{
+        ...font,
+        display: "flex",
+        flexDirection: inline ? "row" : "column",
+        alignItems: inline ? "center" : "stretch",
+        gap: inline ? "var(--vendo-density-inline-gap, 7px)" : "var(--vendo-density-field-gap, 6px)",
+        ...style,
+      }}
+    >
+      {label ? (
+        <label htmlFor={fieldId} style={{ color: t.text, fontSize: "0.88em", fontWeight: t.weightEmphasis, order: inline ? 2 : 0 }}>
+          {label}
+        </label>
+      ) : null}
+      {children}
+      {message ? (
+        <span id={helpId} style={{ color: error ? t.danger : t.muted, fontSize: "0.82em" }}>
+          {message}
+        </span>
+      ) : null}
+    </Field.Root>
+  );
+}

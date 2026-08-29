@@ -1,0 +1,31 @@
+---
+title: "E-DEV-001"
+sidebarTitle: "E-DEV-001"
+description: "Retired: doctor never starts a dev server, so it can never fail to start one."
+---
+
+```text retired
+E-DEV-001 — retired, doctor no longer emits this code
+```
+
+`error_code: E-DEV-001` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This warning fired when doctor offered to start your dev server for its live
+probes and the server never came up in time. Doctor reads files, not
+servers. It never starts anything, so this can never happen.
+
+## The fix
+
+Nothing to do. Doctor runs the same whether your app is up or down.
+
+## Related errors
+
+- [E-CFG-001](/production/troubleshooting/e-cfg-001) — a missing `.vendo/` config file, one of the checks doctor still runs
+- [E-WIRE-001](/production/troubleshooting/e-wire-001) — missing server wiring, found by reading your source

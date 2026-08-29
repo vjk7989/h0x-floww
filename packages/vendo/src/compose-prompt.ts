@@ -1,0 +1,80 @@
+/**
+ * What the ONE thinker is told, and how it finds the rest.
+ *
+ * The system-prompt inputs (03 §3's one prose story, the theme line, the
+ * knowledge index) and the two discovery rails were written twice — once for a
+ * `createAgent` that no longer exists, once for the harness runtime. They are
+ * defined ONCE here and handed to the runtime below.
+ *
+ * The host COMPONENT list is no longer one of them: this thinker renders nothing,
+ * and what a writer is told about the host's components is the briefing pack
+ * (`contract/briefing.ts`), which is now the only rendering of that list there is.
+ * The theme LINE stays — the pack hands the screen agent the tokens verbatim, so
+ * a sentence about the brand here is a different thing for a different reader,
+ * not a second copy.
+ */
+import type { CapabilityMissConfig } from "@vendoai/harnesses";
+import type { VendoToolSearchConfig } from "@vendoai/harnesses/vendo";
+import { themeSummary } from "@vendoai/apps/contract";
+import type { VendoComposition } from "./compose-context.js";
+import { selectConfigSurface } from "./config-surface.js";
+
+/** The prompt inputs and the discovery rails, for the one thinker. */
+export const composePrompt = (composition: VendoComposition): Pick<VendoComposition,
+  "system" | "capabilityMiss" | "toolSearch"> => {
+  const { config, composed, readSurfaceFile } = composition;
+  const { theme, knowledgeIndex, missSurface, missCapture } = composition;
+  // AGENT-1/2 — 03 §3: ONE prose story. `instructions` and the
+  // `.vendo/brief.md` surface behind it are the deployment's own words about
+  // what this product is and how to speak about it; prompt.ts places them as the
+  // Product section. `brief:` and `agent.instructions` were two names for this
+  // and are gone.
+  // Programmatic `instructions` wins over the file; an adopted agent's own
+  // `instructions` is the same slot (AGENT_OWNED_KEYS refuses both at once).
+  // Task 15a: the in-memory profile.brief sits between them — below the
+  // explicit knob, above the file surface — and an explicitly empty one means
+  // "no brief" (it never falls through to disk).
+  const explicit = (config.instructions ?? composed?.instructions)?.trim();
+  const product: string | undefined = explicit
+    ? explicit
+    : config.profile?.brief !== undefined
+      ? config.profile.brief.trim() || undefined
+      : selectConfigSurface("brief.md", { readFile: readSurfaceFile }).value?.trim() || undefined;
+  const promptTheme = themeSummary(theme);
+  const system = product !== undefined || promptTheme !== undefined || knowledgeIndex !== undefined
+    ? {
+        ...(product === undefined ? {} : { product }),
+        ...(promptTheme === undefined ? {} : { theme: promptTheme }),
+        ...(knowledgeIndex === undefined ? {} : { knowledge: knowledgeIndex }),
+      }
+    : undefined;
+  // The honest-refusal rail, defined once for the one thinker: the harness
+  // runtime lists the reporter beside the projected tools.
+  const capabilityMiss: CapabilityMissConfig = {
+    hostId: missCapture.hostId,
+    surface: () => missSurface().then(({ hash }) => ({ format: "vendo/tools@1" as const, hash })),
+    emit: (event) => missCapture.record(event),
+  };
+  // ENG-252, de-brained: `vendo()` starts with a bounded loadout and discovers
+  // the rest through its own `find_tools` hand — this is the strategy config
+  // composition hands it (compose-harness.ts / the adapter slot). No
+  // connect-required annotation any more (deliberate cut): the connect card at
+  // call time is the flow that actually converts.
+  //
+  // NO `search` seam: the hand falls back to scoring THE TURN'S OWN LISTING,
+  // which is the only set that is true for the caller. The seam used to be
+  // `actions.search`, the SHARED registry's scorer — and a registry has no
+  // caller, so it could not see a tenant's connectors (tenant-connectors.ts
+  // overlays those per request). Org A registered tools, the registry served
+  // them, and the agent still answered "no tools" because the one discovery
+  // hand it has was searching a different set: registry-correct and chat-blind
+  // at once. The listing is also the set THE LAW has already projected and the
+  // `surfaces.agent` menu has already curated, so search can no longer name a
+  // withheld tool either. `searchListings` is the newer scorer of the two
+  // (a token-coverage gate the registry's substring scorer lacks).
+  const toolSearch: VendoToolSearchConfig = {
+    ...(config.maxInitialTools === undefined ? {} : { maxInitialTools: config.maxInitialTools }),
+    ...(config.loadout === undefined ? {} : { loadout: [...config.loadout] }),
+  };
+  return { system, capabilityMiss, toolSearch };
+};

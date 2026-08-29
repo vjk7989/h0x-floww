@@ -1,0 +1,337 @@
+import {
+  PARKED_ACTION_COLLECTION,
+  PARKED_CALL_OUTCOME_COLLECTION,
+  isVendoError,
+  VendoError,
+  type ApprovalId,
+  type ApprovalRequest,
+  type IsoDateTime,
+  type ParkedCallOutcome,
+  type Principal,
+  type RunContext,
+  type StoreOps,
+  type ToolCall,
+  type ToolOutcome,
+  type ToolRegistry,
+  type VendoRecord,
+} from "@vendoai/core";
+import type { VendoGuard } from "@vendoai/guard";
+
+/**
+ * Existing-agents Lane B — parked guarded calls with NO Vendo thread and NO app.
+ *
+ * A `vendo_*` pack tool executing in a BYO agent loop returns the
+ * `vendo/approval-ref@1` envelope the instant the guard answers
+ * `pending-approval` — no throw, no block. But nothing in the host's loop ever
+ * re-dispatches the call: the thread resume path (`data-vendo-approval` stream
+ * parts) needs Vendo's conversation, and the apps runtime's `ParkedAction`
+ * pins an `appId` and lives with the app. This seam is the venue-neutral
+ * third venue, riding the same three existing mechanisms end to end:
+ *
+ * - PARK: the {@link ByoApprovals.registry} decorator records the EXACT call
+ *   (guard-minted id, tool, args) plus its `RunContext` when a guarded execute
+ *   returns `pending-approval` — the same shape as `ParkedAction`, minus the
+ *   app pin.
+ * - RESUME: an umbrella-level `guard.onApprovalDecision` subscriber (the SAME
+ *   seam the apps runtime and automations ride) re-dispatches the parked call
+ *   byte-for-byte through the guard-bound registry on approve — the guard's
+ *   one-shot approved replay pins subject, call id, args hash, descriptor
+ *   hash, venue, presence, and appId, so the stored ctx is reused verbatim.
+ *   Deny clears the record and never executes (fail closed).
+ * - EXPIRE: {@link ByoApprovals.sweepExpired} denies parked calls older than
+ *   the TTL through the existing abandonment path (`guard.abandonApprovals`
+ *   semantics: deny + clear, idempotent) — a new trigger, not new semantics.
+ *
+ * The resume outcome persists keyed by approvalId so the wire can answer
+ * "what happened to apr_x?" for `<VendoApprovalEmbed>` — in-thread that answer
+ * rides the thread stream; there is no thread here.
+ */
+
+const PARKED_COLLECTION = "vendo_parked_call";
+
+interface ParkedByoCall {
+  /** The guard approval that gates this call. */
+  approvalId: ApprovalId;
+  /** The parking principal's subject — the only principal who may read it. */
+  owner: string;
+  /** The EXACT call the guard parked; a fresh call id would re-park, not run. */
+  call: ToolCall;
+  /** The context the call ran in — the approved replay pins venue/presence/appId. */
+  ctx: RunContext;
+  parkedAt: IsoDateTime;
+  /** The pending request as the guard reported it at park time. `read` serves
+   *  it while the record exists so a poll landing mid-resume (decided, outcome
+   *  row not yet written) stays "pending" instead of a terminal not-found. */
+  request?: ApprovalRequest;
+  /** Set by the sweep just before it denies, so the decision subscriber
+   *  resolves the outcome to "expired" instead of "declined". */
+  expiring?: boolean;
+}
+
+/** The wire's answer to `GET /approvals/:id` — the frozen
+ *  `VendoApprovalEmbedState` vocabulary, plus what each state needs to render:
+ *  the full request while pending (the consent card shows real inputs), the
+ *  executed outcome after resume.
+ *
+ *  The request is absent where the answer is "not decided yet" but the ask
+ *  itself is no longer anywhere to be had: an IN-APP parked press read during
+ *  the resume window (that lane persists the call, not the request), and a
+ *  DOOR-parked call whose yes is in but whose caller has not retried it yet.
+ *  Surfaces treat both as still-working and keep polling.
+ *
+ *  The outcome is absent for the same door lane: nothing here runs that call,
+ *  so once it has run all this seam can honestly say is that it did. */
+export type ByoApprovalResolution =
+  | { state: "pending"; request?: ApprovalRequest }
+  | { state: "executed"; outcome?: ToolOutcome }
+  | { state: "declined" }
+  | { state: "expired" };
+
+export interface ByoApprovals {
+  /** The guard-bound registry with approval parking — the registry the BYO
+   *  tool pack executes through. Same decisions, same audit; the only
+   *  addition is the parked record behind a `pending-approval` outcome. */
+  registry: ToolRegistry;
+  /** Resolve one approval's state for its owner; not-found for unknown or
+   *  foreign ids (indistinguishable on purpose). */
+  read(approvalId: string, principal: Principal): Promise<ByoApprovalResolution>;
+  /** Deny every parked call idle past `ttlMs` through the existing
+   *  abandonment path. No-op when `ttlMs` is 0 or negative. */
+  sweepExpired(ttlMs: number, now?: number): Promise<void>;
+}
+
+export interface ByoApprovalsConfig {
+  guard: VendoGuard;
+  /** The guard-bound registry (the SAME binding chat, apps, and automations
+   *  execute through) — both the parked call and its resume dispatch ride it. */
+  tools: ToolRegistry;
+  /** THE named-operation surface for this deployment — `undefined` when the
+   *  configured store offers neither its own `ops` nor a SQL handle, exactly as
+   *  `selectStoreOps` reports it. The parked-call drawers are Vendo's own, so
+   *  they are reached through the `engine` family rather than the record
+   *  façade, and this is the only store handle this seam takes. */
+  ops: StoreOps | undefined;
+}
+
+function now(): IsoDateTime {
+  return new Date().toISOString();
+}
+
+function cloneJson<T>(value: T): T {
+  return globalThis.structuredClone(value);
+}
+
+async function listAll(engine: StoreOps["engine"], collection: string): Promise<VendoRecord[]> {
+  const records: VendoRecord[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await engine.list(collection, { ...(cursor === undefined ? {} : { cursor }) });
+    records.push(...page.records);
+    if (page.cursor === undefined || page.cursor === cursor) break;
+    cursor = page.cursor;
+  } while (cursor !== undefined);
+  return records;
+}
+
+export function createByoApprovals({ guard, tools, ops }: ByoApprovalsConfig): ByoApprovals {
+  /** The parked-call drawers are Vendo's own, so they ride the `engine` family.
+   *  Resolved per call rather than at construction: composition runs for every
+   *  deployment, including one whose store offers neither its own `ops` nor a
+   *  SQL handle, and that store only ever loses the parking seam — it must not
+   *  lose the whole umbrella at boot. */
+  const engine = (): StoreOps["engine"] => {
+    if (ops === undefined) {
+      throw new VendoError(
+        "not-implemented",
+        "Parking a BYO guarded call persists it in Vendo's own drawers, so this seam needs the "
+        + "store's named-operation surface: a SQL-backed store (`store: postgres(url)`, or the "
+        + "local default) or a StoreOps-capable store (the Cloud hosted store). The configured "
+        + "store is neither.",
+      );
+    }
+    return ops.engine;
+  };
+
+  const putParked = async (record: ParkedByoCall): Promise<void> => {
+    await engine().put(PARKED_COLLECTION, {
+      id: record.approvalId,
+      data: record,
+      refs: { subject: record.owner, approval: record.approvalId },
+    });
+  };
+
+  const putOutcome = async (record: ParkedCallOutcome): Promise<void> => {
+    await engine().put(PARKED_CALL_OUTCOME_COLLECTION, {
+      id: record.approvalId,
+      data: record,
+      refs: { subject: record.owner, state: record.state },
+    });
+  };
+
+  // RESUME — the decision subscriber. `decide` fires callbacks exactly once
+  // per approval (the pending→decided transition has a single atomic winner)
+  // and awaits them, so the outcome row has one writer and lands before the
+  // decide call returns to the wire.
+  guard.onApprovalDecision(async (approvalId, approved) => {
+    const record = await engine().get(PARKED_COLLECTION, approvalId);
+    if (record === null) return;
+    const data = record.data as ParkedByoCall;
+    try {
+      if (approved) {
+        // Byte-for-byte re-dispatch: the one-shot approved replay executes it;
+        // the guard binding folds a downstream throw into an error outcome.
+        const outcome = await tools.execute(data.call, data.ctx);
+        await putOutcome({ approvalId, owner: data.owner, state: "executed", outcome, at: now() });
+      } else {
+        await putOutcome({
+          approvalId,
+          owner: data.owner,
+          state: data.expiring === true ? "expired" : "declined",
+          at: now(),
+        });
+      }
+    } finally {
+      // Cleared either way: approve ran it, deny fails closed. A parked record
+      // exists exactly while its approval is undecided.
+      await engine().delete(PARKED_COLLECTION, approvalId);
+    }
+  });
+
+  // EXPIRE — abandonApprovals is the guard's idempotent deny wrapper (already-
+  // decided and unknown ids already hold the state abandonment wants). Older
+  // Guard implementations may omit the optional method; the fallback applies
+  // the same semantics through the plain decide path.
+  const abandon = async (approvalId: ApprovalId, ctx: RunContext): Promise<void> => {
+    if (guard.abandonApprovals !== undefined) {
+      await guard.abandonApprovals([approvalId], ctx);
+      return;
+    }
+    try {
+      await guard.approvals.decide(approvalId, { approve: false }, ctx.principal);
+      // An embed that timed out is NOT the user saying no, and `decide` is the
+      // human-consent verb — the only one on the public surface, which must not
+      // grow a provenance argument. So the fallback takes its own no back
+      // immediately: the row stays in the audit trail, but it stops standing,
+      // and the next issue of the same call id asks again instead of inheriting
+      // a refusal nobody made. `abandonApprovals` does this natively (it denies
+      // with system provenance); this is the same outcome through two verbs.
+      await guard.approvals.revoke(approvalId, ctx.principal);
+    } catch (error) {
+      if (isVendoError(error) && (error.code === "conflict" || error.code === "not-found")) return;
+      throw error;
+    }
+  };
+
+  return {
+    registry: {
+      // Forward the projection context. This decorator's whole job is PARKING an
+      // execute, and re-declaring `descriptors()` with no parameter silently
+      // disabled THE LAW's primary mechanism (design §12) on the public BYO door
+      // (`vendo.guardedTools`, which the ai-sdk and mastra packs hand straight
+      // to a foreign loop): `guard.bind` returns the FULL set when it is given no
+      // ctx, so every destructive tool stayed visible to an unattended run. The
+      // execute-time refusal still held, so this was never an escape — but "the
+      // model is never even offered it" is the property §12 buys. Identical to
+      // the connect gate's bug (`createConnectGate().bind`): a decorator with no
+      // opinion about projection must pass the argument straight through.
+      descriptors: (ctx) => tools.descriptors(ctx),
+      async execute(call, ctx) {
+        const outcome = await tools.execute(call, ctx);
+        if (outcome.status === "pending-approval") {
+          // PARK — written right before the pack tool returns the
+          // vendo/approval-ref@1 envelope to the foreign loop. The request
+          // snapshot keeps `read` answering "pending" through the resume
+          // window, after the decision has already left the guard's queue.
+          const requests = await guard.approvals.pending(ctx.principal);
+          const request = requests.find((candidate) => candidate.id === outcome.approvalId);
+          await putParked({
+            approvalId: outcome.approvalId,
+            owner: ctx.principal.subject,
+            call: cloneJson(call),
+            ctx: cloneJson(ctx),
+            parkedAt: now(),
+            ...(request === undefined ? {} : { request: cloneJson(request) }),
+          });
+        }
+        return outcome;
+      },
+    },
+
+    async read(approvalId, principal) {
+      // BOTH lanes' terminal rows land here (parked-outcome.ts): a BYO call the
+      // subscriber below resolved, or an in-app action the apps runtime did.
+      const record = await engine().get(PARKED_CALL_OUTCOME_COLLECTION, approvalId);
+      if (record !== null) {
+        const data = record.data as ParkedCallOutcome;
+        if (data.owner === principal.subject) {
+          if (data.state === "executed" && data.outcome !== undefined) {
+            return { state: "executed", outcome: data.outcome };
+          }
+          if (data.state === "declined" || data.state === "expired") {
+            return { state: data.state };
+          }
+        }
+      }
+      const pending = await guard.approvals.pending(principal);
+      const request = pending.find((candidate) => candidate.id === approvalId);
+      if (request !== undefined) return { state: "pending", request };
+      // Mid-resume window: the decision already left the guard's pending queue
+      // but the subscriber has not written the outcome row yet. EITHER lane's
+      // parked record exists exactly until that write, so serve its request
+      // snapshot as still-pending rather than a terminal not-found — which the
+      // embed renders as expired, and a screen's poll logs as a failed read
+      // once every few seconds for the length of the resumed call.
+      for (const collection of [PARKED_COLLECTION, PARKED_ACTION_COLLECTION]) {
+        const stillParked = await engine().get(collection, approvalId);
+        // The two lanes' records differ (the in-app one pins an app and keeps
+        // no request snapshot), but the owner is the same field in both.
+        const data = stillParked?.data as Pick<ParkedByoCall, "owner" | "request"> | undefined;
+        if (data?.owner !== principal.subject) continue;
+        return { state: "pending", ...(data.request === undefined ? {} : { request: data.request }) };
+      }
+      // The THIRD lane: a call parked at the MCP door. `compose-mcp` hands the
+      // door the plain bound registry, so nothing was ever parked here and
+      // nothing here resumes it — approving GRANTS the call and the outside
+      // agent retries it itself ("resolve it there, then retry", door.ts). So
+      // the guard's own row is the only witness left, and without it every
+      // decided door approval fell through to the not-found below, which
+      // <VendoApprovalEmbed> renders as "Expired" on the very approval the
+      // person just granted.
+      const decided = await guard.approvals.get?.(approvalId, principal);
+      if (decided !== undefined) {
+        if (decided.status === "pending") return { state: "pending", request: decided.request };
+        // Only a person's no is a decline; the TTL sweep's and the abandonment
+        // path's are expiries, and a row too old to carry the field reads as
+        // the sweep's (the fail-safe direction — "ask again", never a no
+        // nobody said).
+        if (decided.status === "denied") {
+          return { state: decided.deniedBy === "human" ? "declined" : "expired" };
+        }
+        // Approved. The yes is spent by the call it authorizes, so `consumedAt`
+        // is what tells "it ran" from "it is about to": until then the card
+        // keeps its working beat and its poll rather than settling on a receipt
+        // for something that has not happened.
+        if (decided.consumedAt !== undefined) return { state: "executed" };
+        // A yes taken back (`DELETE /approvals/:id`) can never be spent — the
+        // same nothing-ran receipt a no leaves.
+        return decided.voidedAt === undefined ? { state: "pending" } : { state: "declined" };
+      }
+      throw new VendoError("not-found", `Approval ${approvalId} was not found`);
+    },
+
+    async sweepExpired(ttlMs, at = Date.now()) {
+      if (ttlMs <= 0) return;
+      for (const record of await listAll(engine(), PARKED_COLLECTION)) {
+        const data = record.data as ParkedByoCall;
+        const parkedAt = Date.parse(data.parkedAt);
+        if (Number.isFinite(parkedAt) && parkedAt + ttlMs > at) continue;
+        // Mark first, so the deny lands as "expired" — the subscriber is the
+        // outcome's single writer and reads the flag when the decision fires.
+        // A concurrent user approve that wins the atomic decide still executes
+        // and records "executed"; this abandon then no-ops (conflict).
+        await putParked({ ...data, expiring: true });
+        await abandon(data.approvalId, data.ctx);
+      }
+    },
+  };
+}

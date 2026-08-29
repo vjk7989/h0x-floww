@@ -1,0 +1,41 @@
+---
+title: "E-MCP-002"
+sidebarTitle: "E-MCP-002"
+description: "Retired: doctor no longer fetches the door's authorization-server metadata over HTTP."
+---
+
+```text retired
+E-MCP-002 — retired, doctor no longer emits this code
+```
+
+`error_code: E-MCP-002` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when the door's authorization-server metadata did not
+resolve, so callers could not find where tokens come from. Doctor fetched
+that document over HTTP and no longer makes any request.
+
+## The fix
+
+The document still has to resolve, and you check it yourself now.
+
+```bash
+curl -s https://your-app.example.com/.well-known/oauth-authorization-server/api/vendo/mcp
+```
+
+A correct response is JSON with an `issuer` string. In broker mode
+(`VENDO_MCP_BROKER_URL` set, or `mcp.remoteAs` configured), your door names
+an external server in `authorization_servers[0]` instead; curl that server's
+own `/.well-known/oauth-authorization-server` and confirm it names itself as
+`issuer`. A broker that is down breaks this even when your door is fine.
+
+## Related errors
+
+- [E-MCP-009](/production/troubleshooting/e-mcp-009) — the door wired without `VENDO_BASE_URL`, which doctor still catches
+- [E-MCP-001](/production/troubleshooting/e-mcp-001) — the protected-resource document, also retired

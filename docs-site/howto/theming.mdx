@@ -1,0 +1,259 @@
+---
+title: "Theme it"
+sidebarTitle: "Theme it"
+icon: "palette"
+description: "One token file sets the colors, type, radii, density, and motion of every Vendo surface in your product."
+---
+
+Your brand, extracted from your own UI on day one, then yours to edit.
+
+<Steps>
+
+<Step title="Open .vendo/theme.json">
+
+`vendo init` already wrote it, filled from your app's own CSS. Five groups,
+one file.
+
+```json .vendo/theme.json
+{
+  "colors": {
+    "background": "#FBFBFA",
+    "surface": "#FFFFFF",
+    "text": "#111111",
+    "muted": "#908C85",
+    "accent": "#111111",
+    "accentText": "#FFFFFF",
+    "danger": "#B42318",
+    "border": "#ecebe8"
+  },
+  "typography": { "fontFamily": "Inter, sans-serif", "baseSize": "15px" },
+  "radius": { "small": "6px", "medium": "14px", "large": "14px" },
+  "density": "comfortable",
+  "motion": "full"
+}
+```
+
+| Group | What it drives |
+| --- | --- |
+| `colors` | surfaces, text, accents, borders |
+| `typography` | the body font, and the size the type scale is derived from |
+| `radius` | every corner in the chrome |
+| `density` | control heights, padding, and gaps |
+| `motion` | `160ms`, or `0ms` when you set it to `reduced` |
+
+</Step>
+
+<Step title="Adjust the tokens you care about">
+
+Edit values in place. Here a purple accent, tighter corners, and a compact
+scale:
+
+```json .vendo/theme.json focus={7,13,14}
+{
+  "colors": {
+    "background": "#FBFBFA",
+    "surface": "#FFFFFF",
+    "text": "#111111",
+    "muted": "#908C85",
+    "accent": "#8b5cf6",
+    "accentText": "#FFFFFF",
+    "danger": "#B42318",
+    "border": "#ecebe8"
+  },
+  "typography": { "fontFamily": "Inter, sans-serif", "baseSize": "15px" },
+  "radius": { "small": "3px", "medium": "6px", "large": "10px" },
+  "density": "compact",
+  "motion": "full"
+}
+```
+
+Keep all five groups. The file is a whole theme, not a patch.
+
+</Step>
+
+<Step title="Every surface re-themes">
+
+The provider you pasted from init already imports the file, so there is
+nothing else to wire.
+
+```tsx app/layout.tsx focus={2}
+import { VendoProvider } from "@vendoai/vendo/react";
+import theme from "../.vendo/theme.json";
+
+<VendoProvider baseUrl="/api/vendo" theme={theme}>
+  {children}
+</VendoProvider>
+```
+
+Save and reload. The overlay, slots, generated screens, approval modals, and
+toasts each stamp these tokens on their own root and move together. Nothing in
+the chrome hardcodes a Vendo brand.
+
+</Step>
+
+</Steps>
+
+## One surface, a different theme
+
+The provider sets the brand for everything under it. A single surface can
+differ — a dark assistant panel on a light page, a compact slot in a dense
+console — with its own `theme` prop.
+
+```tsx
+import { VendoOverlay, VendoSlot } from "@vendoai/vendo/react";
+
+<VendoSlot id="net-worth-card" />
+<VendoSlot id="ops-console" theme={{ density: "compact" }} />
+<VendoOverlay theme={darkPanel} />
+```
+
+It merges over the provider's resolved theme group by group, the same way the
+provider's merges over Vendo's default — so a surface states only what differs,
+and the groups it leaves out stay the brand. With no provider above it, the
+merge runs over the default.
+
+Six surfaces take it: `VendoOverlay`, `VendoSlot`, `VendoTrigger`,
+`VendoAppEmbed`, `VendoApprovalEmbed`, and `VendoToolResult`. Type it with
+`Partial<VendoTheme>`.
+
+What a surface sends to `document.body` goes with it. The overlay panel, the
+approval modal a press parks on, and the toast stack all wear the theme of the
+surface they came from rather than falling back to the provider's.
+
+<Warning>
+  A surface theme styles Vendo's **frame**, not the view inside it. A generated
+  view keeps the **provider** theme either way it mounts — served in an iframe,
+  or rendered natively as a pin — because the view is its own theme boundary and
+  restates the provider's tokens on itself. Theme a surface to change the chrome
+  around a generated view; change the provider to change the view.
+</Warning>
+
+A slot showing your own markup renders it untouched, with no Vendo wrapper at
+all. There is no chrome on screen there, so `theme` has nothing to style.
+
+## Good to know
+
+- Extraction reads your root layout, the CSS that layout imports, and
+  `tailwind.config.*`, taking the shadcn and Tailwind names exactly:
+  `--primary`, `--background`, `--card`, `--font-sans`, `--radius`.
+- Every group also lands as `--vendo-*` CSS variables on the surface root, so
+  `var(--vendo-density-card-padding)` in your own styles tracks the same theme.
+- `--vendo-color-scheme` is derived, not written. Vendo takes the relative
+  luminance of `colors.background` and flips to `dark` below `0.179`, so a dark
+  brand gets dark chrome on its own.
+- Those five groups are the whole required shape. Every token added since is
+  optional, so a theme file written a year ago still parses.
+- `vendo sync` re-reads your app and updates the slots you have not touched. A
+  slot you edited by hand is pinned and reported, and `vendo sync
+  --theme-refresh` takes your app's value back.
+- `createVendo` has its own `theme` key, resolved once at boot. It feeds app
+  generation and the one theme line in the agent's prompt, not the chrome.
+  Leave it unset and the server reads `.vendo/theme.json`.
+
+## Token reference
+
+Every value the five groups expand into. Open a panel when you need an exact
+number.
+
+<AccordionGroup>
+  <Accordion title="Density variables">
+
+`density: "compact"` tightens control sizes, padding, and gaps, and
+`comfortable` relaxes them. Every compact value is less than or equal to its
+comfortable counterpart.
+
+| Variable | `compact` | `comfortable` |
+| --- | --- | --- |
+| `--vendo-density` | `compact` | `comfortable` |
+| `--vendo-density-control-height` | `32px` | `38px` |
+| `--vendo-density-control-padding` | `6px 10px` | `9px 12px` |
+| `--vendo-density-card-padding` | `12px` | `16px` |
+| `--vendo-density-content-gap` | `7px` | `10px` |
+| `--vendo-density-inline-gap` | `5px` | `7px` |
+| `--vendo-density-field-gap` | `4px` | `6px` |
+| `--vendo-density-table-padding` | `7px 10px` | `10px 12px` |
+| `--vendo-density-badge-height` | `20px` | `24px` |
+| `--vendo-density-badge-padding` | `3px 7px` | `5px 9px` |
+| `--vendo-density-stat-padding` | `9px 11px` | `12px 14px` |
+| `--vendo-density-tabs-padding` | `3px` | `4px` |
+| `--vendo-density-tab-height` | `26px` | `30px` |
+| `--vendo-density-tab-padding` | `4px 8px` | `6px 10px` |
+
+A Kit container takes its own `density` adjective and re-emits this same
+ladder on its own element. That is how a compact table sits inside a
+comfortable page.
+
+  </Accordion>
+  <Accordion title="Color scheme">
+
+Vendo derives `color-scheme` from the WCAG relative luminance of
+`colors.background` and publishes it as `--vendo-color-scheme`. Backgrounds
+below `0.179` resolve to `dark`, and everything else resolves to `light`.
+
+| Variable | Light background | Dark background |
+| --- | --- | --- |
+| `--vendo-color-scheme` | `light` | `dark` |
+
+A color the parser cannot read resolves to `light`. Only `#rgb`, `#rgba`,
+`#rrggbb`, and `#rrggbbaa` are parsed.
+
+The chrome's `light-dark()` branches key off this variable, so a dark-brand
+host gets dark chrome with no extra configuration. Read it from your own
+styles to make a custom surface track the same flip:
+
+```css
+.my-card {
+  color-scheme: var(--vendo-color-scheme);
+}
+```
+
+  </Accordion>
+  <Accordion title="Motion variables">
+
+`motion: "reduced"` collapses the duration to `0ms`. The easing curve does not
+change.
+
+| Variable | `full` | `reduced` |
+| --- | --- | --- |
+| `--vendo-motion` | `full` | `reduced` |
+| `--vendo-motion-duration` | `160ms` | `0ms` |
+| `--vendo-motion-easing` | `cubic-bezier(0.2, 0.8, 0.2, 1)` | `cubic-bezier(0.2, 0.8, 0.2, 1)` |
+
+Both defaults are overridable. Set `motionDuration` or `motionEasing` on the
+theme and `full` motion uses your values instead, while `reduced` still pins
+the duration to `0ms`.
+
+  </Accordion>
+  <Accordion title="Mobile takeover">
+
+The overlay panel goes full-bleed at viewports 767px wide and narrower. It
+covers the host layout rather than docking inside a squeezed column.
+
+The panel portals to `document.body`, so a transformed or filtered host
+ancestor cannot confine it. It pads all four edges with the iOS safe-area
+insets.
+
+Touch ergonomics are keyed to small viewports **or** coarse pointers, so a
+tablet in a wide orientation still gets honest targets. The composer renders
+at 16px to stop iOS auto-zoom, and icon buttons and the overlay close control
+expand to 44px.
+
+Desktop chrome is unchanged.
+
+While the takeover is open, the panel stamps a `--fl-kb-inset` variable
+derived from `visualViewport` so the composer lifts above the on-screen
+keyboard. Read it if you render a custom surface inside one:
+
+```css
+.my-mobile-footer {
+  padding-bottom: calc(
+    env(safe-area-inset-bottom, 0px) + var(--fl-kb-inset, 0px)
+  );
+}
+```
+
+Keep the `0px` fallback. Outside the takeover the variable is not set at all,
+and with the takeover open but no keyboard showing it is `0px`.
+
+  </Accordion>
+</AccordionGroup>

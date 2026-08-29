@@ -1,0 +1,347 @@
+---
+title: "vendo CLI"
+sidebarTitle: "vendo CLI"
+description: "Every vendo command and every flag it accepts: init, login, doctor, sync, knowledge, mcp, cloud, and config."
+---
+
+The `@vendoai/vendo` package owns the `vendo` bin. `vendo --version` prints the version, `vendo --help` the command list.
+
+| Command | What it does |
+| --- | --- |
+| [`init [dir]`](#vendo-init-dir) | Wire the handler, extract tools and theme, resolve a model key |
+| [`login`](#vendo-login) | Claim a Vendo Cloud key; it lands in `.env.local` |
+| [`doctor [dir]`](#vendo-doctor) | Verify the install from the files on disk: wiring, config, tools, deps |
+| [`sync [dir]`](#vendo-sync) | Re-extract tools and baselines, then judge what moved |
+| [`knowledge <verb>`](#vendo-knowledge) | Sync local docs into the product knowledge base |
+| [`mcp <command>`](#vendo-mcp) | Generate MCP registry discovery and domain-verification files |
+| [`cloud <command>`](#vendo-cloud) | Use the public Vendo Cloud API |
+| [`config <command>`](#vendo-config) | Show which layer owns each `.vendo` config surface |
+
+`init`, `login`, `doctor`, `sync`, and `knowledge` reject an option they do not recognize and exit `1` before doing anything; a value flag missing its value fails the same way. `mcp`, `cloud`, and `config` do not check their flags — an unrecognized option is ignored there, though an unrecognized sub-command still exits `1`.
+
+## `vendo init` {#vendo-init-dir}
+
+```bash
+npx vendo init
+```
+
+Scans the app, scaffolds the server surface, and writes the `.vendo/` contract. Any error exits `1`.
+
+Init never writes to a file you authored. Mounting `<VendoProvider>` is the one paste it hands back, printed as an exact block naming the file and lines.
+
+`dir` defaults to the current directory. In a monorepo, point it at the workspace whose `package.json` declares the framework dependency.
+
+### Answering the wizard
+
+| Flag | Values | Answers |
+| --- | --- | --- |
+| `--use-case <name>` | `embedded`, `agent-loop`, `mcp` | how people will use the agent |
+| `--auth <preset>` | `authJs`, `clerk`, `supabase`, `auth0`, `jwt`, `none` | which auth preset to wire |
+| `--cloud-key <key>` | a `vnd_` key | writes an existing Vendo Cloud key to `.env.local` |
+| `--byo` | | declines the Cloud key offer |
+| `--ai` / `--no-ai` | | force the AI judgment pass on or off |
+| `--base-url <url>` | a full `http(s)` URL | where the app runs **in dev**. Lands in `.env.local` as `VENDO_BASE_URL`; never a deployed URL |
+| `--theme <slot=value>` | repeatable | answers an uncertain theme slot |
+| `--posture <name>` | `local`, `broker` | which authorization server fronts the door. Not asked — `broker` opts out of the dev sign-in key. `--use-case mcp` only |
+| `--service-key` | | the dev sign-in key, which a local door already wires by default. `--use-case mcp` only |
+
+`--posture broker` exits `1` on a dev URL that is not `https://`. Vendo Cloud registers that origin as the tenant's forwarding address and refuses a non-https one, so the door would be written and then fail on its first request. Take `--posture local`: zero config, and it works on http. [The rest of the rule](/reference/vendo-init#every-flag).
+
+### Overriding detection
+
+| Flag | Values | Effect |
+| --- | --- | --- |
+| `--framework <name>` | `next`, `express`, `custom` | overrides framework detection. Required non-interactively when detection fails |
+| `--engine <name>` | `claude`, `codex`, `npx` | pins the AI-pass engine instead of first-available. An unavailable pin skips the pass loudly |
+
+### Run behavior
+
+| Flag | Effect |
+| --- | --- |
+| `--yes` | skip every prompt and take the detected defaults |
+| `--agent` | route the questions through a coding agent instead of a terminal prompt |
+| `--force` | regenerate Vendo-owned files under `.vendo/`. Never replaces host source |
+| `--check` / `--no-check` | run `vendo doctor` at the end, or skip it. Never changes init's exit code |
+
+`--cloud-key` and `--byo` answer the same question, as do `--ai` and `--no-ai` and `--check` and `--no-check`. Passing both halves of a pair exits `1`.
+
+`--ai-polish` is the older spelling of `--ai` and still works.
+
+With no answers on the command line, `--agent` prints one JSON object of the questions it still needs, writes nothing, and exits `0`. Your agent relays them to you, then re-runs init with your answers as flags — that run writes. Pass every answer on the first call and there is no ask pass at all. Full shape on [Agent mode](/reference/vendo-init#agent-mode).
+
+The full walkthrough is on [vendo init](/reference/vendo-init).
+
+## `vendo login`
+
+Claims a Vendo Cloud key through the [claim ceremony](https://vendo.run/auth.md). The CLI prints a pairing code and approval URL, then polls until a human approves in the browser.
+
+The minted `VENDO_API_KEY` is written to `.env.local` in the current working directory and never printed. Run it from the same directory you ran init in.
+
+The pending claim persists to `~/.vendo/pending-claims/<hash>.json` (mode `0600`, inside a `0700` directory), hashed from the directory the claim was opened for. A fresh `vendo login` **in that same directory** resumes the claim after a crash, and scoping by directory is what stops two logins in two projects from resuming each other's ceremony. A pre-0.4.2 `~/.vendo/pending-claim.json` is migrated on first read, and only when its recorded directory matches.
+
+| Flag | Effect |
+| --- | --- |
+| `--wait <seconds>` | bound this invocation's polling, then exit resumably with code `0`. `--wait 0` opens the claim, polls once, and exits |
+| `--api-url <url>` | overrides `VENDO_CONSOLE_URL` |
+
+`--wait` takes a whole number of seconds; anything else exits `1`. The command takes no email, and `--email` is not a flag.
+
+`vendo cloud device-login` runs the same ceremony under an alias, with one difference: it does not check its flags, so an option it does not recognize is ignored rather than exiting `1`.
+
+## `vendo doctor`
+
+Reads the repo and reports what is wired and what is missing: wiring markers, the `.vendo/` files, store persistence, surface ownership, the model credential in your environment, the tool catalog, installed `ai` and `zod` versions, and the MCP discovery files.
+
+Doctor never starts a server and never makes a request. Run it with your app stopped.
+
+It fails unless a visible surface is mounted somewhere. `<VendoProvider>` alone renders nothing a user can reach.
+
+| Flag | Effect |
+| --- | --- |
+| `--json` | print exactly one report object on stdout and suppress every other line |
+
+The `--json` object is `{ vendo, version, wired, exit, checks, cloud, summary }`. `wired` is true when no check failed, and `exit` is `wired ? 0 : 1`.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | every check passed |
+| `1` | at least one check failed |
+
+Every check's symptom, cause, and fix is on its own [troubleshooting page](/production/troubleshooting/e-wire-001).
+
+## `vendo sync`
+
+Runs the build-step scan manually: tool extraction, [remix baselines](/generated/import-and-fork#what-sync-captures), the host component catalog, and the theme.
+
+Sync fails soft. An extraction failure still exits `0`, because a sync problem must never break a build.
+
+| Flag | Effect |
+| --- | --- |
+| `--strict` | CI gate: exit `2` on breaking tool changes, `3` when saved references point at them |
+| `--json` | print exactly one report object on stdout. Never prompts |
+| `--report` | push the report to Vendo Cloud |
+| `--review` | show queued and new loosenings and confirm before writing. Cannot combine with `--json` |
+| `--full` | judge the whole catalog instead of only what moved |
+| `--yes` | take the flags as given and never prompt |
+| `--theme-refresh` | take the theme scan's values even for slots you hand-edited |
+| `--push-components` / `--no-push-components` | answer the registered-component upload question without a prompt |
+| `--ai` / `--no-ai` | force the judgment pass on or off. `--no-watermark` is an accepted alias of `--no-ai` |
+| `--engine <name>` | `claude`, `codex`, or `npx`. An unavailable pin skips loudly and never falls back |
+| `--url <url>` | the wire URL for the blast-radius query against a running dev server. Defaults to `${VENDO_BASE_URL}/api/vendo` |
+| `--key <key>` | override `VENDO_API_KEY` |
+| `--api-url <url>` | override `VENDO_CONSOLE_URL` |
+
+The `--json` object is `{ ok, exitCode, report, impact, notes, theme, baselines, components }`. An `error` field appears when extraction itself failed soft.
+
+### Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | success. Warnings never fail the run, and a soft extraction failure without `--strict` still exits `0` |
+| `1` | a bad flag, or `--report` with no resolvable Cloud key — a `--report` that never reported is a failed run. The `--strict` codes are more specific and keep their meaning |
+| `2` | `<Remixable>` wrappers that cannot be captured (any mode); breaking tool changes under `--strict` that impact nothing saved; or a soft extraction failure under `--strict` |
+| `3` | breaking tool changes that impact saved apps, automations, or grants, under `--strict` |
+
+### The theme re-scan
+
+Sync re-runs the deterministic theme scan and reconciles it with `.vendo/theme.json` against the merge base in `.vendo/theme.extracted.json`. Hand edits are never clobbered.
+
+A slot is machine-owned only when the base records it and `theme.json` still holds exactly that value. Everything else is pinned to you and reported with both values.
+
+Values compare by meaning, not bytes: `#FFFFFF` and `#ffffff` are the same color.
+
+Derived slots follow their source. `accentText` is the accent's contrast color, `headingFamily` inherits `fontFamily`, and `radius.small` and `radius.large` scale from `radius.medium`.
+
+The base advances only on a run with no pinned slots. `--theme-refresh` takes every changed slot and records the base.
+
+### What reaches Vendo Cloud
+
+| Artifact | When | Collection |
+| --- | --- | --- |
+| Pin baselines from `.vendo/remixable/` | every keyed sync, no `--report` needed | `vendo_pin_baselines` |
+| Registered host components from `.vendo/components/` | after a once-per-project yes saved to `.vendo/cloud.json` | `vendo_host_components` plus a blob namespace |
+| The sync report | `--report` only | the project's report surface |
+
+A baseline file that exists but cannot be read is skipped with a warning and its Cloud row is left alone. Only an absent file is a deletion signal.
+
+What crosses the wire is the captured source: each component, every module in its import closure, and the app-root stylesheets. Capture stops at `node_modules`.
+
+### The judgment pass
+
+A coding agent grades each tool with a verbatim source quote behind every proposal, an independent skeptic checks each one, and the survivors land in `.vendo/judgments.json`.
+
+Candidates are chosen by drift, a changed `srcHash` or a binding mismatch, unless `--full` judges everything. Hardenings and prose apply themselves; loosenings wait for a human.
+
+`.vendo/overrides.json` is never written by this pass. It means one thing: what a human decided.
+
+| | no flag | `--ai` | `--no-ai` |
+| --- | --- | --- | --- |
+| Interactive (TTY) | asks, every run | runs | skipped |
+| Non-interactive | skipped, with a note | runs | skipped |
+
+Non-interactive means CI, a pipe, `--json`, `--yes`, or a run started by a package script. A run you did not invoke never gets a question.
+
+<Note>
+  On an incremental run `--ai` skips the engine sweep, because `predev` calls sync on every dev-server start. The pass then reads the environment only, so a machine whose sole credential is a `claude` or `codex` CLI login gets `judgment: structural-only`. Add `--full`, or drop `--ai` on an interactive run, to walk the whole ladder.
+</Note>
+
+### Sample run
+
+```console
+$ vendo sync --strict --no-ai --url http://127.0.0.1:3000/api/vendo
+tools: +0 -0 ~1
+pins: 1 captured, 0 drifted
+catalog.json: 2 discovered, 2 registered
+components: 2 captured, 0 updated
+theme: 2 slots re-read from your app (accent, accentText) → .vendo/theme.json
+baselines → Vendo Cloud: 1 pushed, 1 pruned
+components → Vendo Cloud: 2 pushed, 0 pruned, 4 new modules (37 KB)
+breaking: host_listAccounts input-narrowed
+impact: host_listAccounts breaks 1 automation, 1 grant
+```
+
+## `vendo knowledge`
+
+```bash
+npx vendo knowledge add "docs/**/*.md" --kind docs
+npx vendo knowledge sync
+```
+
+`add`, `list`, and `remove` only edit `.vendo/knowledge.json`. `sync` is the one verb that moves content.
+
+| Verb | What it does |
+| --- | --- |
+| `add <glob> [dir]` | register a local source of markdown or JSON files |
+| `add notion` · `add gdocs` | print the console URL where those sources connect, and exit `0` |
+| `list [dir]` | show configured sources and their synced document counts |
+| `remove <name> [dir]` | drop a source entry; its documents leave the engine on the next sync |
+| `sync [dir]` | ingest, diff against `.vendo/knowledge-manifest.json`, and push what changed |
+
+| Flag | Values | Effect |
+| --- | --- | --- |
+| `--kind <kind>` | `docs`, `glossary`, `api` | content shape. Default `docs` |
+| `--visibility <tier>` | `public`, `internal` | `internal` answers trusted callers only. Default `public` |
+| `--name <slug>` | | source name, which namespaces its document ids |
+| `--dry-run` | | sync only: print the plan without moving content |
+
+The manifest is written last, after the engine confirms, so a failed sync re-syncs instead of silently skipping.
+
+## `vendo mcp`
+
+Tooling for publishing your door to the official MCP registry. Both subcommands operate on the current directory unless you pass a `dir`.
+
+### `vendo mcp server-json`
+
+```bash
+npx vendo mcp server-json --domain example.com --url https://app.example.com/api/vendo/mcp
+```
+
+Generates and validates the `server.json` the registry expects, reading name, version, description, and homepage from your `package.json`.
+
+| Flag | Effect |
+| --- | --- |
+| `--domain <domain>` | registry namespace to publish under. Prompted if omitted |
+| `--url <public-mcp-url>` | public URL of the live door. Prompted if omitted |
+| `--force` | overwrite an existing `server.json` |
+
+### `vendo mcp verify-domain`
+
+```bash
+npx vendo mcp verify-domain \
+  --domain example.com \
+  --key-out ~/.vendo/mcp-registry.key \
+  --write-well-known ./public
+```
+
+Generates the Ed25519 keypair and challenge that prove ownership of a registry namespace.
+
+| Flag | Effect |
+| --- | --- |
+| `--domain <domain>` | required. The domain you are proving |
+| `--key-out <path>` | required. Path for the private seed, written `0600`, refusing to overwrite |
+| `--write-well-known <dir>` | also write the challenge to `<dir>/.well-known/mcp-registry-auth` |
+
+It prints both the DNS TXT record and the HTTP challenge value (`v=MCPv1; k=ed25519; p=<base64>`). Publish either one.
+
+## `vendo cloud`
+
+Client for the public Vendo Cloud API. Read results print as JSON.
+
+| Command | What it does |
+| --- | --- |
+| `device-login [EMAIL]` | alias of `vendo login` |
+| `login EMAIL` | email-OTP fallback: sends a 6-10 digit code and prompts for it |
+| `login --token <jwt>` | store an access token directly |
+| `logout` | delete the stored session at `~/.vendo/cloud-session.json` |
+| `whoami [--token <jwt>]` | list organizations for the current user |
+| `orgs` | list organizations |
+| `keys list --project <id>` | list API keys |
+| `keys create --project <id> --name <name>` | create an API key |
+| `keys revoke --project <id> --id <keyId>` | revoke an API key |
+| `usage --project <id> [--days <days>]` | per-day requests and dollars. Default 30 days |
+| `members --org <id>` | list organization members |
+| `invite --org <id> --email <email> --role <admin\|member>` | invite a member |
+
+`--org` and `--project` can be omitted when there is exactly one candidate.
+
+| Global flag | Effect |
+| --- | --- |
+| `--api-url <url>` | overrides `VENDO_CONSOLE_URL` |
+| `--json` | advertised but inert; read subcommands already print JSON |
+
+There is no validate subcommand and no deploy subcommand. Key problems surface on the first real call, and automations need no deploy step of their own — they run in your process, woken by Cloud's heartbeat on `POST /api/vendo/tick`.
+
+`vendo cloud usage` answers with per-day counts and the period total:
+
+```json
+{
+  "days": [{ "day": "2026-08-04", "requests": 128, "usd": 4.02 }],
+  "totalUsd": 23.41
+}
+```
+
+## `vendo config`
+
+Reports which layer owns each `.vendo/` content surface. It reads local disk only: no credential, no network call.
+
+```bash
+npx vendo config status
+```
+
+| Command | What it does |
+| --- | --- |
+| `status [dir]` | show each surface's owner, `file` or `unset` |
+
+Surfaces: `design-rules.md`, `brief.md`, `theme.json`, `policy.json`, `overrides.json`. Each resolves as a value passed to `createVendo`, then the local file, then unset — see [the content surfaces](/reference/dot-vendo#the-content-surfaces). A value passed in code wins over the file but is invisible to the CLI, so `status` only ever reports `file` or `unset`.
+
+`.vendo/overrides.json` gates both app generation and tool enablement. Enablement resolves boot-once on the first request, so an edit applies on the next restart; generation picks it up per generation.
+
+## Retired commands
+
+| Command | What replaced it |
+| --- | --- |
+| `vendo refine` | `vendo sync` AI-enriches `.vendo` now |
+| `vendo playground` | set Vendo up in your own repo: `vendo init`, then `vendo doctor` |
+
+Both still parse and exit `1` with a line pointing at the replacement.
+
+## Agent surfaces
+
+Machine-readable entry points, for a coding agent driving the install.
+
+| Surface | What it serves |
+| --- | --- |
+| `https://vendo.run/agents.md` | The agent playbook as raw Markdown. Append `.md` to any docs page |
+| `https://vendo.run/auth.md` | The raw claim-ceremony protocol behind `vendo login` |
+| `https://docs.vendo.run/llms.txt` | Index of every docs page for LLM ingestion |
+| `https://docs.vendo.run/llms-full.txt` | The whole docs site as one file |
+| `npx vendo init --agent` | Init's setup questions as one JSON object, answered back as flags on a re-run |
+| `npx vendo doctor --json` | One machine-readable install report on stdout |
+| `npx vendo sync --json` | One machine-readable sync report on stdout |
+| `.claude/skills/vendo-setup/` | Setup skill shipped in the npm tarball; init writes it when `.claude/` exists |
+
+## Telemetry opt-out
+
+Set `VENDO_TELEMETRY_DISABLED=1`, or set `"optedOut": true` in `~/.vendo/telemetry.json`. `DO_NOT_TRACK`, `CI`, and production runtime also disable build and development telemetry.

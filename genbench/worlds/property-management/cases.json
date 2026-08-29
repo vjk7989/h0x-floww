@@ -1,0 +1,202 @@
+[
+  {
+    "id": "rent-roll",
+    "lane": "screen",
+    "prompt": "Show me the August rent roll: every tenant charged this month, what they were charged, what they've paid, and what's still outstanding across the portfolio.",
+    "pass": [
+      "lists all eight August charges, one row per tenant, and no rows the tool did not return",
+      "each row's charged and paid amounts match the tool's numbers exactly",
+      "shows a portfolio total still outstanding of $6,970.00",
+      "marks each row as paid in full, partly paid, or unpaid"
+    ],
+    "tags": ["display"],
+    "shape": "table"
+  },
+  {
+    "id": "collections-chart",
+    "lane": "screen",
+    "prompt": "Chart what I've billed against what I actually collected for the last six months, oldest month on the left.",
+    "pass": [
+      "draws a chart of the six months rather than only listing them",
+      "shows both billed and collected for every month",
+      "the months run oldest to newest, March 2026 through August 2026",
+      "August's collected figure of $12,075.00 reads far below its billed figure of $19,045.00"
+    ],
+    "tags": ["display"],
+    "shape": "chart"
+  },
+  {
+    "id": "maintenance-board",
+    "lane": "screen",
+    "prompt": "Put my maintenance requests on a board grouped by status so I can see what's still untouched, what's booked, and what's being worked on.",
+    "pass": [
+      "groups all nine requests into columns by status: open, scheduled, in progress, done",
+      "the open column holds exactly the five open requests",
+      "each request shows its unit and title, and the two urgent ones are visibly flagged",
+      "no request appears in more than one column"
+    ],
+    "tags": ["display"],
+    "shape": "board"
+  },
+  {
+    "id": "no-maintenance-requests",
+    "lane": "screen",
+    "prompt": "Put my maintenance requests on a board grouped by status so I can see what's still untouched, what's booked, and what's being worked on.",
+    "pass": [
+      "says there are no maintenance requests rather than drawing an empty board",
+      "invents no request rows",
+      "still names what the screen is for, so the empty state is not a blank page"
+    ],
+    "tags": ["display"],
+    "shape": "empty-state",
+    "data": { "list_maintenance_requests": { "data": [] } }
+  },
+  {
+    "id": "assign-vendor",
+    "lane": "screen",
+    "prompt": "Show me the maintenance requests nobody is on yet and let me put one of my vendors on each of them.",
+    "pass": [
+      "lists exactly the five requests with no vendor on them",
+      "each row shows its unit, title and category so the vendor choice makes sense",
+      "offers a vendor choice on each row drawn from the five vendors the tool returned",
+      "assigning fires assign_vendor with that row's request id and the chosen vendor's id"
+    ],
+    "tags": ["action"],
+    "shape": "table"
+  },
+  {
+    "id": "record-payment",
+    "lane": "screen",
+    "prompt": "Ellis Boone just handed me a check for the rest of his August rent. Give me a form to record that payment against his charge.",
+    "pass": [
+      "the form targets Ellis Boone's August charge and shows what it is against",
+      "offers the $1,200.00 he still owes as the amount, rather than the full rent",
+      "asks for a payment method as well as an amount",
+      "submitting fires record_payment with that charge's id, the amount in cents (120000, not 1200), and a method"
+    ],
+    "tags": ["action"],
+    "shape": "form"
+  },
+  {
+    "id": "late-notice-blast",
+    "lane": "screen",
+    "prompt": "Show me every tenant who still owes something on August rent with all of them ticked, let me untick anyone I would rather not chase, and send the rest a late notice in one go, with a confirmation before anything goes out.",
+    "pass": [
+      "lists exactly the four tenants with an August balance and none of the four who paid in full, all four ticked when the screen loads",
+      "shows each of them the amount they still owe",
+      "several can be ticked at once and sent with one control",
+      "asks for confirmation first, and the confirmation says how many notices it is about to send — the four rows ticked when the screen loads"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "showings-week",
+    "lane": "screen",
+    "prompt": "Lay out this week's showings day by day: which unit, who's coming, what time, and who's covering it.",
+    "pass": [
+      "groups the six showings by day across Aug 12 to Aug 15",
+      "each showing shows its unit, the prospect, the time and the agent covering it",
+      "the two requested showings read as not yet confirmed",
+      "no day is filled with appointments the tool did not return"
+    ],
+    "tags": ["display"],
+    "shape": "calendar"
+  },
+  {
+    "id": "moveout-closeout",
+    "lane": "screen",
+    "prompt": "Grace Okonjo is out of Alder Court 2A on Aug 31. Build me the move-out sheet for that unit: her lease dates, the deposit I'm holding, what she still owes on August rent, the open work orders on the unit, and what's left of the deposit after all of it.",
+    "pass": [
+      "shows her lease running Sep 1 2025 to Aug 31 2026 and the $2,190.00 deposit held",
+      "shows the $1,095.00 she still owes on August rent",
+      "lists both open work orders on that unit, at $185.00 and $225.00, and no work order from another unit",
+      "ends on $685.00 left of the deposit — the deposit less the rent owed and both estimates"
+    ],
+    "tags": ["display"],
+    "shape": "detail"
+  },
+  {
+    "id": "lease-renewals",
+    "lane": "screen",
+    "prompt": "Which leases are up in the next 90 days? Show me each one's current rent next to what the unit could get on the market and the increase that implies, soonest first, and let me renew one straight from its row.",
+    "pass": [
+      "lists the five leases ending on or before Nov 10 2026, soonest end date first, and no lease ending later",
+      "each row pairs that lease's current rent with its unit's market rent and the difference between them",
+      "the tenant who has already given notice is not offered a renewal",
+      "renewing fires renew_lease with that lease's id, a new end date, and the new rent in cents"
+    ],
+    "tags": ["action"],
+    "shape": "table"
+  },
+  {
+    "id": "portfolio-dashboard",
+    "lane": "screen",
+    "prompt": "Give me one screen with occupancy — a unit on notice still counts as occupied — how much of August rent is collected so far, and how many maintenance requests are still sitting at open, not the scheduled or in-progress ones — the whole portfolio at a glance.",
+    "pass": [
+      "all three answers sit on the one screen: occupancy, August rent collected, and open maintenance requests",
+      "occupancy counts the two vacant units out of the ten — 8 of 10, or 80%",
+      "shows $12,075.00 collected of the $19,045.00 charged for August",
+      "counts 5 requests still open, not all nine"
+    ],
+    "tags": ["display"],
+    "shape": "dashboard",
+    "source": "AppFolio — Owner Portal Dashboard, https://appfolio.com/property-management-owner-experience"
+  },
+  {
+    "id": "portal-announcement",
+    "lane": "screen",
+    "prompt": "Write a notice about Saturday's water shutoff and post it to the resident portal for Wexler Row.",
+    "pass": [
+      "the notice is aimed at Wexler Row, picked from the buildings the tool returned rather than typed free-hand",
+      "a title and a body are both drafted and both still editable before anything goes out",
+      "the drafted body says what the notice is about — Saturday and the water shutoff",
+      "posting fires post_announcement with Wexler Row, the title and the body on screen"
+    ],
+    "tags": ["action"],
+    "shape": "feed-composer",
+    "source": "AppFolio — Portal announcement composer"
+  },
+  {
+    "id": "lease-timeline",
+    "lane": "screen",
+    "prompt": "Pull up everything that's happened on Ellis Boone's lease — payments, notices, work orders — in the order it happened, so I have the full story before I call him.",
+    "pass": [
+      "shows exactly the six events on Ellis Boone's lease and none from another tenant's",
+      "lays them out as one dated track rather than a plain table of rows",
+      "the events run in the order they happened, the Nov 1 2025 signing first and the Aug 10 late notice last",
+      "each event says what kind it is — signing, payment, notice, work order — alongside what happened"
+    ],
+    "tags": ["display"],
+    "shape": "timeline",
+    "source": "Buildium — Timeline activity views"
+  },
+  {
+    "id": "message-inbox",
+    "lane": "screen",
+    "prompt": "Show me every tenant and prospect message from this week as an inbox — the list on one side, the full message when I open one.",
+    "pass": [
+      "lists all six messages newest first, each with its sender, subject and preview line",
+      "the three unread ones are visibly marked apart from the three already read",
+      "opening a message shows its full body without leaving the screen, and the list is still reachable",
+      "each message names the unit it is about as 'Wexler Row · 2B', never a raw id"
+    ],
+    "tags": ["display"],
+    "shape": "split-inbox",
+    "source": "AppFolio — Realm-X centralized inbox, https://appfolio.com/property-manager/communication-service"
+  },
+  {
+    "id": "vacant-unit-photos",
+    "lane": "screen",
+    "prompt": "Wexler Row 2B and Alder Court 2B are both empty — pull up the marketing photos we already have on file for each so I know what's ready to post.",
+    "pass": [
+      "shows the captioned photos as a grid of cards — seven of them, four under Wexler Row · 2B and three under Alder Court · 2B",
+      "the tiles are grouped by unit, each group headed by its unit name",
+      "every tile is labelled with its own caption from the tool, which is all the tool returns — no image file stands behind it",
+      "the two photos on Alder Court 2A are not shown"
+    ],
+    "tags": ["display"],
+    "shape": "gallery",
+    "source": "AppFolio — Marketing/Floorplan Photos, https://help.propertymeld.com/hc/en-us/articles/45793810226323"
+  }
+]

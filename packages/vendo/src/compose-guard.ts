@@ -1,0 +1,217 @@
+/**
+ * 05-guard — THE choke point, and the two things composition adds to it: the
+ * plumbing a spec-shaped `guard()` cannot supply (store, risk resolver, org
+ * layer), and the one-shot warning a present-mode host
+ * tool call raises when its credentials cannot be forwarded.
+ */
+import {
+  RESERVED_SUBJECT_PREFIX,
+  VENDO_AUTOMATE_TOOL,
+  type RunContext,
+  type ToolCall,
+  type ToolDescriptor,
+} from "@vendoai/core";
+import {
+  createGuard,
+  isGuardInstance,
+  type GuardRules,
+  type PolicyConfig,
+  type RiskResolver,
+  type VendoGuard,
+} from "@vendoai/guard";
+import type { VendoComposition } from "./compose-context.js";
+import { readFileSyncOrUndefined } from "./dot-vendo.js";
+import { orgPolicyPath, orgPolicyResolver, workspacePolicySource } from "./org-policy.js";
+
+/** The file the guard reads when a policy config names none of its own
+ *  (guard/src/policy.ts's DEFAULT_POLICY_FILE) — relative to the process cwd,
+ *  exactly as it reads it, so the two can never name different documents. */
+const DEFAULT_POLICY_FILE = ".vendo/policy.json";
+
+/**
+ * The policy file this deployment is waiting on and does not have.
+ *
+ * A judgment made HERE and carried on the composition, for the same reason the
+ * store's ephemeral-disk one is (boot-summary.ts): the boot block may only read
+ * composed facts, and this one needs to look at a disk.
+ *
+ * The fallback it reports STAYS — a missing file on the default path is
+ * swallowed (guard/src/policy.ts:115) so a deployment boots on the built-in
+ * posture rather than refusing, which is the right call for a file that is not
+ * required. What was missing is anyone saying it happened. And it is never the
+ * never-configured case: `vendo init` always writes a starter policy.json
+ * (cli/init.ts's `wireAndScaffold`), so file-based policy with no file means
+ * rules that went away.
+ *
+ * Silent for every config that is not waiting on that file: no policy at all
+ * (the guard reports `unconfigured`, and the chrome already says so), inline
+ * rules or a preset name (both replace the file with no merge, ibid. :141),
+ * and an explicitly named `file` (a missing one already throws, ibid. :115).
+ */
+const missingPolicyFile = (policy: PolicyConfig | undefined): string | undefined =>
+  typeof policy === "object" && policy.file === undefined && policy.rules === undefined
+    && readFileSyncOrUndefined(DEFAULT_POLICY_FILE) === undefined
+    ? DEFAULT_POLICY_FILE
+    : undefined;
+
+/** ADAPTER RULE, guard seam: a built VendoGuard is this deployment's choke
+ *  point verbatim; a spec is completed here. ONE constructor either way. */
+export const composeGuard = (composition: VendoComposition): Pick<VendoComposition,
+  "guard" | "resolveRisk" | "warnPresentCredentialsNotForwarded" | "policyFileMissing"> => {
+  const { config, store, ops } = composition;
+  // profile.policy is the parsed policy.json document held in memory, for a
+  // deployment with no filesystem — `vendo init` writes the file instead
+  // (cli/init-scaffolds.ts). Precedence keeps the
+  // sibling pieces' discipline: the longer-standing explicit `policy` knob
+  // wins outright; otherwise the piece feeds the guard as inline rules +
+  // directions (defaulted like an absent file key), which replace the
+  // file leg entirely (inline wins with no merge — 00-overview
+  // decision 19); an unset piece leaves the guard's own file read
+  // unchanged.
+  //
+  // The `guard:` slot's spec arm is where the host's rules live now; an
+  // INSTANCE arm brings its own and is taken verbatim below, so there are no
+  // rules to complete.
+  const guardRules: GuardRules = isGuardInstance(config.guard) ? {} : config.guard ?? {};
+  const configPolicy: PolicyConfig | undefined = guardRules.policy ?? (
+    config.profile?.policy === undefined ? undefined : {
+      rules: config.profile.policy.rules ?? [],
+      directions: config.profile.policy.directions ?? [],
+    }
+  );
+  // The resolver is installed immediately after createApps below. Keeping the
+  // hook in guard means chat/SSE and the MCP door reach the same decision.
+  //
+  // Two resolvers, chained, app first: an app's own tool grade is a decision a
+  // person made in this deployment, so it outranks a broker's catalog tag —
+  // and the two can never collide anyway, since only `use_service_tool`
+  // reaches the second leg.
+  //
+  // Named rather than inlined because the automations engine takes the SAME
+  // function: arm-time capture has to grade a declared connector call exactly
+  // as the away call will be graded, or the grant it mints is hashed against a
+  // label the guard never sees and is invalidated on first use.
+  const resolveRisk: RiskResolver = async (call, _descriptor, ctx) =>
+    (await composition.resolveAppToolRisk?.(call, ctx)) ?? await composition.serviceToolRisk(call);
+  /**
+   * 07 §3 — what ONE yes to a parked ask mints beyond the call in hand.
+   *
+   * Only `vendo_automate` has an answer: it is the ask whose yes authorizes calls
+   * nobody has made yet, so the powers the automation will hold are named on the
+   * ask itself (`ApprovalRequest.powers`) rather than asked for again per tool
+   * afterwards. Everything else answers `undefined` — an ordinary ask's call IS
+   * the whole of what is being allowed.
+   *
+   * Computed ONCE, here, and rendered by whichever surfaces know how: there is
+   * deliberately nothing channel-specific about it. The engine's own
+   * `armingPowers` is the single computation, shared with the mint that runs when
+   * the yes comes back, so the ask and the grants cannot name different tools.
+   *
+   * Late-bound through `composition`, the same way `resolveRisk` above reaches the
+   * apps runtime: the automations engine is composed after the guard, and this
+   * only ever runs inside a later park.
+   */
+  const describePowers = async (
+    call: ToolCall,
+    ctx: RunContext,
+  ): Promise<readonly string[] | undefined> => {
+    if (call.tool !== VENDO_AUTOMATE_TOOL) return undefined;
+    return await composition.automations?.armingPowers(ctx);
+  };
+  // ADAPTER RULE, guard seam: a built VendoGuard is this deployment's choke
+  // point verbatim; rules are completed here with the plumbing only a
+  // composition can supply — the store, the app/service risk resolver, the
+  // org layer. ONE constructor either way.
+  const guard = isGuardInstance(config.guard) ? config.guard : createGuard({
+    store,
+    // The engine family for the guard's own drawers, over the SAME store.
+    // Absent for a store with neither its own ops nor a SQL handle — the block
+    // then serves the same verbs off the adapter itself, so an unset slot is a
+    // route, not a downgrade.
+    ...(ops === undefined ? {} : { ops }),
+    resolveRisk,
+    describePowers,
+    ...(guardRules.approvals === undefined ? {} : { approvals: guardRules.approvals }),
+    ...(guardRules.breakers === undefined ? {} : { breakers: guardRules.breakers }),
+    ...(configPolicy === undefined ? {} : { policy: configPolicy }),
+    ...(guardRules.judge === undefined ? {} : { judge: guardRules.judge }),
+    // Build contract §9.10 — the org-admin layer, composed at the seam like
+    // every other adapter choice: the guard evaluates rules, this reads them.
+    // Callers with no asserted memberships (every unkeyed deployment, and any
+    // request whose host asserted none) resolve to no rules at all.
+    //
+    // A per-ORG failure (unreadable or malformed policy.json) skips that org's
+    // rules and lands on the audit trail, so the admin whose file is broken can
+    // see their policy is not in force. Reported through the guard that is being
+    // constructed here — the callback only ever runs inside a later check, which
+    // is the same late-binding `resolveRisk` above uses.
+    orgPolicy: orgPolicyResolver(workspacePolicySource(store), async (org, reason) => {
+      console.warn(
+        `[vendo] org policy for "${org}" was not applied: ${reason} `
+        + `(its rules live at ${orgPolicyPath(org)}) — until then this org's rules are not in force.`,
+      );
+      await guard.report({
+        id: `aud_${globalThis.crypto.randomUUID()}`,
+        at: new Date().toISOString(),
+        kind: "policy-decision",
+        // A broken org file is nobody's personal event, so it is audited under
+        // the runtime's own reserved namespace (`vendo:`, block-actions §C)
+        // rather than pinned to whichever member happened to trigger the read.
+        principal: { kind: "user", subject: `${RESERVED_SUBJECT_PREFIX}org-policy:${org}` },
+        venue: "chat",
+        presence: "away",
+        detail: { reason: "org-policy-unavailable", org, message: reason },
+      });
+    }),
+  });
+  return {
+    guard,
+    resolveRisk,
+    warnPresentCredentialsNotForwarded: presentCredentialsWarning(guard),
+    policyFileMissing: missingPolicyFile(configPolicy),
+  };
+};
+
+/** 04 §4 — the once-per-process warning a present-mode host tool call raises
+ *  when the wire has no trusted origin to forward the caller's credentials to. */
+const presentCredentialsWarning = (
+  guard: VendoGuard,
+): VendoComposition["warnPresentCredentialsNotForwarded"] => {
+  let presentCredentialsWarningEmitted = false;
+  const warnPresentCredentialsNotForwarded = async (event: {
+    ctx: RunContext;
+    tool: ToolDescriptor;
+    reason: "untrusted-host-origin" | "cross-origin-binding";
+  }): Promise<void> => {
+    if (presentCredentialsWarningEmitted) return;
+    presentCredentialsWarningEmitted = true;
+    const action = event.reason === "untrusted-host-origin"
+      ? "Set VENDO_BASE_URL to the host origin and restart the server."
+      : "Keep present host authentication same-origin, or use actAs/connector authentication.";
+    try {
+      await guard.report({
+        id: `aud_${globalThis.crypto.randomUUID()}`,
+        at: new Date().toISOString(),
+        kind: "tool-call",
+        principal: event.ctx.principal,
+        venue: event.ctx.venue,
+        presence: event.ctx.presence,
+        ...(event.ctx.appId === undefined ? {} : { appId: event.ctx.appId }),
+        ...(event.ctx.trigger === undefined ? {} : { trigger: event.ctx.trigger }),
+        tool: event.tool.name,
+        detail: {
+          warning: {
+            code: "present-credentials-not-forwarded",
+            reason: event.reason,
+            action,
+          },
+        },
+      });
+    } catch (error) {
+      // Let a later call retry the warning if the audit sink was temporarily down.
+      presentCredentialsWarningEmitted = false;
+      throw error;
+    }
+  };
+  return warnPresentCredentialsNotForwarded;
+};

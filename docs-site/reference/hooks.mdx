@@ -1,0 +1,350 @@
+---
+title: "Hooks"
+sidebarTitle: "Hooks"
+description: "Every headless React hook from @vendoai/ui: the shared read shape, opt-in polling, the per-hook write verbs, and the context accessors."
+---
+
+Headless React hooks that read from the same wire the built-in chrome uses. Pair them with your own UI, or drop them beside `VendoOverlay` to power an inline widget.
+
+```ts
+import { useThreads, useApprovals, useVendoThread } from "@vendoai/ui";
+```
+
+Every hook here is also re-exported from `@vendoai/vendo/react`, which is the import that needs no direct `@vendoai/ui` dependency — with one exception. `useApprovalModal` ships only on `@vendoai/ui/chrome`:
+
+```ts
+import { useApprovalModal } from "@vendoai/ui/chrome";
+```
+
+## The shared read shape
+
+Collection hooks all return the same read fields, so one pattern renders loading, error, and empty states across the whole surface.
+
+```ts
+{
+  threads: ThreadSummary[];      // seeded, never undefined: [] before the first read lands
+  error: Error | undefined;      // last fetch error, or undefined when the read succeeded
+  isLoading: boolean;            // true only on the first load; refresh does not flip it
+  refresh: () => Promise<void>;  // re-fetch on demand; resolves after the read settles
+}
+```
+
+The collection is seeded, not `undefined`, so `threads.length === 0` means empty *or* not loaded yet. `isLoading` is what tells those apart, and it only ever flips for the first fetch — a first-mount spinner never flashes again on a poll.
+
+A failed read keeps the last good collection, so you can render a retry affordance without blanking the surface.
+
+`useApp` is the exception. It returns a single document, so its `app` is `AppDocument | undefined`.
+
+## Every hook
+
+| Hook | Returns | Polling |
+| --- | --- | --- |
+| `useThreads(options?)` | `threads: ThreadSummary[]`, plus `get(id)` and `remove(id)` | `pollMs` |
+| `useApp(appId, options?)` | `app`, `surface`, plus `call(ref, args)`, `edit(instruction)`, `history` | |
+| `useApps(options?)` | `apps: AppDocument[]`, plus `create`, `remove`, `fork`, `exportApp`, `importApp` | `pollMs` |
+| `useApprovals(options?)` | `pending: ApprovalRequest[]`, plus `decide(ids, decision, options?)` | `pollMs` |
+| `useAttention(options?)` | everything `useApprovals` returns, plus `askCount`, `asks`, `unseenResults`, `lastResult`, `markResultsSeen()` | `pollMs` |
+| `useGrants(options?)` | `grants: PermissionGrant[]`, plus `revoke(id)` | `pollMs` |
+| `useConnections(options?)` | `connections: ConnectionAccount[]`, plus `disconnect(id, connector?)` | `pollMs` |
+| `useConnectorCatalog()` | `{ options, resolved, explicit, failed, retry }`, the connect dock's effective catalog | |
+| `useAutomations(options?)` | `automations: AutomationEntry[]`, plus `enable`, `disable`, `runs`, `dryRun`, `stopRun` | `pollMs` |
+| `useActivity(options?)` | `events: AuditEvent[]`, plus `hasMore` and `loadMore()` | `pollMs` |
+| `useSlots(options?)` | `slots: SlotEntry[]`, the caller's registered slots | `pollMs` |
+| `useSlotApp(slotId, options?)` | `{ appId, status, error, isLoading, refresh }` | on by default |
+| `useVendoThread(threadId?)` | the streaming conversation. See [Threads](#threads) | |
+| `useVendoChat(options)` | the same conversation against an `@vendoai/agents` mount, without a provider. See [Standalone agent chat](#standalone-agent-chat) | |
+| `useVendoStatus()` | `{ posture, connected, memberships }` | |
+| `useVendoContext(data)` | nothing. Publishes `data` into the prompt's `[Context]` block while mounted | |
+| `useVendoOverlay(options?)` | `VendoOverlayController`. See [Overlay control](#overlay-control) | |
+| `useMobileTakeover()` | `{ active, keyboardInset, style }`, the full-bleed mobile breakpoint | |
+| `useApprovalSheetPresentation()` | `boolean`, whether an in-thread consent presents as the bottom sheet | |
+| `useApprovalModal()` | `{ onParked, modal }`. See [Approval modal](#approval-modal) | |
+
+There is no generic `execute` callback. Hooks that write name their verbs: `decide`, `revoke`, `disconnect`, `enable`, `disable`, `create`, `remove`, `fork`, `importApp`, `edit`, `dryRun`, `stopRun`.
+
+Each returns a promise, and the ones that change the collection refresh it when they resolve. `exportApp` is the exception, being a pure read that refreshes nothing.
+
+A hook's `isLoading` still tracks only the first read, so drive mutation-pending UI from your own `await`.
+
+## Context accessors
+
+| Hook | Returns |
+| --- | --- |
+| `useVendoProvider()` | the whole `VendoContextValue`. Throws outside a `<VendoProvider>` |
+| `useVendoTheme()` | the resolved `VendoTheme` |
+| `useVendoThemeOrDefault()` | the same, falling back to the default theme |
+| `useVendoTools()` | the `ToolMetaMap` a host passed as `<VendoProvider tools>` |
+| `useVendoDiscoverability()` | the discoverability config |
+| `useVendoGreeting()` | the configured greeting, or `undefined` |
+| `useVendoRoutes()` | the `VendoRouteMap` |
+| `useVendoNavigate()` | the host's `onNavigate`, or `undefined` |
+
+There is no `useVendo`. `useVendoProvider` is the React-context accessor, because `useVendoContext(data)` owns the [agent-context](/customize/context) name.
+
+## Polling
+
+Pass `pollMs` to keep a value fresh without a manual refresh. Polls are self-scheduling rather than interval-driven, so the next tick arms only after the current refresh settles and a slow server never stacks requests.
+
+```tsx
+"use client";
+
+import { useApprovals } from "@vendoai/ui";
+
+export function ApprovalBadge() {
+  const { pending, error, isLoading, refresh } = useApprovals({ pollMs: 5_000 });
+
+  if (isLoading) return <span aria-hidden />;
+  if (error) return <button onClick={refresh}>Retry</button>;
+
+  return pending.length > 0 ? <span>{pending.length} to review</span> : null;
+}
+```
+
+Omit `pollMs` for a one-shot fetch on mount. Polling does not pause when the tab is hidden, so pick a cadence you are willing to pay for in the background.
+
+`useApp` and `useVendoStatus` never poll. `useApp` still returns `refresh()`; `useVendoStatus` reads once per mount, and remounting is the only way to re-read it.
+
+`useSlotApp` is the opposite: it polls every 5 seconds by default, because a placement made in the conversation surface has to appear in the slot on its own. Pass `{ pollMs }` to change the cadence, or `{ enabled: false }` to stand it down.
+
+`useApprovals` and `useSlotApp` each share one poller per client across every mounted instance, so a page with ten slots still makes one request.
+
+## Threads
+
+`useThreads` reads the same summaries `VendoOverlay` uses, so a custom conversation list keeps parity with the shipped chrome.
+
+```tsx
+"use client";
+
+import { useThreads } from "@vendoai/ui";
+
+export function ThreadList({ onSelect }: { onSelect: (id: string) => void }) {
+  const { threads, error, isLoading, refresh } = useThreads();
+
+  if (isLoading) return <p>Loading…</p>;
+  if (error) return <button onClick={refresh}>Retry</button>;
+  if (threads.length === 0) return <p>No conversations yet.</p>;
+
+  return (
+    <ul>
+      {threads.map((thread) => (
+        <li key={thread.id}>
+          <button onClick={() => onSelect(thread.id)}>{thread.title}</button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+`ThreadSummary.title` is always a string, so no `?? "Untitled"` fallback is needed.
+
+Pair it with `useVendoThread(threadId)` to drive the streaming turn. It wraps the AI SDK's `useChat`, so its vocabulary is the AI SDK's.
+
+```ts
+const {
+  threadId,      // the effective id: yours, or the one the server minted on the first turn
+  messages,      // UIMessage[]
+  beats,         // the turn's status beats
+  sendMessage,   // send a turn; the name is not `send`
+  steer,         // land a mid-turn correction on the running turn
+  status,        // "ready" | "submitted" | "streaming" | "error"
+  error,
+  approvals,     // the turn's pending approval parts, ready to render
+  addToolApprovalResponse,
+  stop,
+  resumeStream,
+  setMessages,
+  regenerate,
+  clearError,
+} = useVendoThread(selectedThreadId);
+```
+
+The argument is named `selectedThreadId` on purpose. The hook also returns `threadId`, so destructuring into that name while passing it in is a use-before-declaration error.
+
+`setMessages` is what an edit-last affordance is built on: drop the last user turn and anything after it, then refill your input from that message. This is the flow the shipped chrome's Edit affordance uses.
+
+```tsx
+"use client";
+
+import { useVendoThread } from "@vendoai/ui";
+
+export function EditLastButton() {
+  const { messages, setMessages } = useVendoThread();
+
+  function editLast() {
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    if (!lastUser) return;
+    setMessages(messages.slice(0, messages.indexOf(lastUser)));
+    // refill your own composer input from lastUser
+  }
+
+  return <button onClick={editLast}>Edit last</button>;
+}
+```
+
+The hook does not queue sends. Calling `sendMessage` mid-stream hands the message straight to the AI SDK.
+
+The "type while it is answering, and it sends when the reply lands" behavior belongs to the shipped chrome's composer, which holds the draft and re-sends it on the busy edge. Reproduce it by watching `status`.
+
+## Standalone agent chat
+
+`useVendoChat` is `useVendoThread`'s thinner sibling, for a page talking to an [`@vendoai/agents` mount](/reference/server-api#handler). No provider, no client, no embed chrome, no `[Context]` block — just the transport, the thread-id round trip, and the two things you have to render for an agent that asks permission.
+
+```ts
+const {
+  threadId,       // the id the server minted, also handed to onThreadId
+  messages,
+  sendMessage,
+  status,
+  error,
+  interruptions,  // Interruption[] — what this turn is waiting on a person for
+  resume,         // answer them, keyed by Interruption.id
+  stop,
+} = useVendoChat({ api: "/api/agent" });
+```
+
+`options` is `{ api, threadId?, onThreadId? }`, where `api` is where you mounted `handler()`.
+
+It keeps nothing in the browser. Reopening a thread reads the transcript back through the mount's own route, so an approval parked before a reload comes back in `interruptions` with no client state to have lost.
+
+`resume(decisions)` posts to the mount's approvals wire rather than the AI SDK's local approval channel: the guard's decision is what unblocks the parked call, and flipping the part in the browser would change what the page draws and nothing about what the agent is doing. A decision that does not land — a `409` for an ask already answered or expired — throws instead of being swallowed.
+
+## Apps export and import
+
+`useApps` exposes `exportApp(appId)` and `importApp(bytes)` beside the read fields, so a custom drawer can round-trip an `AppDocument` without hand-rolling calls to `/apps/:id/export` and `/apps/import`.
+
+```tsx
+"use client";
+
+import { useApps } from "@vendoai/ui";
+
+export function AppsDrawer() {
+  const { apps, error, isLoading, refresh, exportApp, importApp } = useApps();
+
+  async function onExport(id: string) {
+    const bytes = await exportApp(id);
+    // save to disk, share, or hand to another user
+  }
+
+  async function onImport(file: File) {
+    await importApp(new Uint8Array(await file.arrayBuffer()));
+    // importApp already refreshed the list
+  }
+}
+```
+
+Import mints a fresh `app_` id and carries over no data, grants, or authority.
+
+## Overlay control
+
+`useVendoOverlay` gives your own chrome programmatic control over `VendoOverlay`.
+
+```ts
+export interface VendoOverlayController {
+  isOpen: boolean;
+  open(): void;
+  close(): void;
+  toggle(): void;
+  newConversation(): void;
+  overlayProps: { open: boolean; onOpenChange(open: boolean): void; conversationKey: number };
+}
+```
+
+`useVendoOverlay(options?)` accepts one option, `defaultOpen?: boolean`. Spread `overlayProps` onto the component and call `open`, `close`, or `toggle` from your own shortcut.
+
+```tsx {13,20}
+"use client";
+
+import { useEffect } from "react";
+import { useVendoOverlay } from "@vendoai/ui";
+import { VendoOverlay } from "@vendoai/ui/chrome";
+
+export function Assistant() {
+  const overlay = useVendoOverlay();
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        overlay.toggle();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [overlay.toggle]);
+
+  return <VendoOverlay {...overlay.overlayProps} />;
+}
+```
+
+The panel portals to `document.body`, locks page scroll, marks the page behind the scrim `inert`, and restores focus to the invoking element on close.
+
+Closing hides the panel without discarding the conversation, so reopening within the same page session restores the prior messages. Call `overlay.newConversation()` to start fresh.
+
+## Approval modal
+
+`useApprovalModal` is the mount seam for the screen-initiated approval modal, the centered ask a person sees when a button inside a generated view parks on the guard.
+
+The shipped chrome already mounts it on `VendoSlot`, on in-thread app cards and the workspace stage, on the chat embeds, and on mounted remix forks. Reach for the hook when you render a `TreeView`, `AppFrame`, or a bespoke slot yourself.
+
+```ts
+export function useApprovalModal(): {
+  onParked(parked: ParkedPress): void;  // hand this to the tree's onParked prop
+  modal: ReactNode;                     // render this somewhere in your tree
+};
+
+export interface ParkedPress {
+  nodeId: string;
+  approvalId: ApprovalId;
+}
+```
+
+Wire it in two lines. Pass `approval.onParked` down to whichever component fires it, and render `approval.modal` alongside.
+
+```tsx {12,13}
+"use client";
+
+import { AppFrame, useApprovalModal } from "@vendoai/ui/chrome";
+import type { OpenSurface } from "@vendoai/vendo";
+
+export function CustomStage({ surface, components }: {
+  surface: OpenSurface;
+  components: Record<string, React.ComponentType>;
+}) {
+  const approval = useApprovalModal();
+  return (
+    <>
+      <AppFrame surface={surface} components={components} onParked={approval.onParked} />
+      {approval.modal}
+    </>
+  );
+}
+```
+
+Presses queue by design. Pressing several guarded buttons raises several approvals, and exactly one modal is on screen at a time.
+
+Approve or Deny spends the decision. Esc and the scrim close the modal without deciding, so a dismissed ask stays pending.
+
+### `refusalCopy`
+
+`refusalCopy(reason)` maps an error from `approvals.decide` to the same user-voice sentence the built-in approval card renders when a decision fails to land.
+
+```ts
+import { refusalCopy } from "@vendoai/ui/chrome";
+
+try {
+  await approvals.decide([id], "approve");
+} catch (reason) {
+  setError(refusalCopy(reason));  // e.g. "This request was already answered."
+}
+```
+
+## Hooks or chrome
+
+Reach for `VendoOverlay` and the other chrome components when you want the shipped surface with brand tokens applied.
+
+Reach for hooks when you need counts, badges, or lists inside your own layout, or when your chrome has to react to Vendo state without rendering the overlay at all.
+
+Both paths speak the same wire, so mixing them in one app is safe.
+
+If you run your own agent loop and spread in the guarded tool pack, a separate set of components renders Vendo inside that chat instead: `VendoToolResult`, `VendoAppEmbed`, and `VendoApprovalEmbed`, all on [Embeds and envelopes](/existing-agent/embeds).

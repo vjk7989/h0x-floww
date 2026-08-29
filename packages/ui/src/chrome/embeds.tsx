@@ -1,0 +1,503 @@
+import {
+  VENDO_APP_REF_KIND,
+  VENDO_AUTOMATION_REF_KIND,
+  isVendoError,
+  parseVendoToolEnvelope,
+  type ApprovalDecision,
+  type ToolOutcome,
+  type UIPayload,
+} from "@vendoai/core";
+import {
+  effectiveAppBuildUiDeadlineMs,
+} from "@vendoai/apps/contract";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useVendoProvider } from "../context.js";
+import type {
+  VendoAppEmbedProps,
+  VendoApprovalEmbedProps,
+  VendoToolResultProps,
+} from "../embeds.js";
+import { useResource } from "../hooks/use-resource.js";
+import { AppFrame } from "../tree/frames.js";
+import type { ApprovalResolution, OpenSurface } from "../wire-types.js";
+import { PlacementAction } from "./add-to-picker.js";
+import { ApprovalCard, APPROVAL_LINES } from "./approval-card.js";
+import { useApprovalModal } from "./approval-modal.js";
+import { AutomationCard } from "./automation-card.js";
+import {
+  CardActions,
+  CardFields,
+  CardHead,
+  CardLine,
+  CardShell,
+  CARD_EYEBROWS,
+} from "./card-shell.js";
+import { ChromeRoot } from "./chrome-root.js";
+import { developmentMode } from "./dev-mode.js";
+import { resultRows } from "./field-rows.js";
+import { buildFailureNotice } from "./thread/message-data.js";
+
+/**
+ * The three embeds a BYO chat surface renders from
+ * `vendo_*` tool outputs (frozen prop contracts in ../embeds.ts). Drop one on a
+ * page and it works: the wire is `/api/vendo`, auth rides the host session
+ * cookie, theme rides the `--vendo-*` tokens, and they take no client/config
+ * props of their own. A surrounding `VendoProvider` overrides those defaults
+ * for everything inside it (context.tsx). Failure states speak the existing
+ * failed/expired vocabulary — never a silent blank.
+ */
+
+/** While the build streams the wire has nothing to serve yet, so the embed
+ *  polls open(); a build that never lands resolves to the failed vocabulary
+ *  instead of an eternal beat. The cutoff derives from the ONE shared
+ *  build-deadline constant (@vendoai/core, speed-core lane) and strictly
+ *  exceeds the server build watchdog, so the watchdog's terminal record —
+ *  with its honest reason and retry affordance — always lands first. */
+const APP_POLL_MS = 1200;
+const APP_BUILD_DEADLINE_MS = effectiveAppBuildUiDeadlineMs();
+/** 0.4.5 E2E cert (defect D) — the wire client has no fetch timeout, so one
+ *  hung open() used to freeze the self-scheduling poll (and with it the
+ *  deadline check) forever. Each poll races this cap; a timed-out poll keeps
+ *  the ordinary retry cadence. */
+const APP_OPEN_TIMEOUT_MS = 15_000;
+
+/** Settle `work` within `ms` or reject — the poll loop's hang guard. The
+ *  underlying fetch is not aborted (the wire client takes no signal); the
+ *  loop simply stops waiting on it. */
+const withPollTimeout = <T,>(work: Promise<T>, ms: number): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`the build-status poll did not answer within ${Math.round(ms / 1000)}s`)), ms);
+    work.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (reason: unknown) => { clearTimeout(timer); reject(asError(reason)); },
+    );
+  });
+/** Pending approvals re-poll so a decision made anywhere (this card, the
+ *  workspace queue, another tab) resolves this embed in place. */
+const APPROVAL_POLL_MS = 2500;
+
+function asError(reason: unknown): Error {
+  return reason instanceof Error ? reason : new Error(String(reason));
+}
+
+const tick = (
+  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="m5 12 4 4L19 6" />
+  </svg>
+);
+
+const cross = (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+    <path d="M18 6 6 18M6 6l12 12" />
+  </svg>
+);
+
+/** One resolved line in the thread's beat vocabulary: tick for done, x for
+ *  failed/terminal, orb while working. */
+function BeatLine({ state, children }: { state: "working" | "done" | "error"; children: ReactNode }) {
+  return (
+    <div className={`fl-beat fl-beat-${state}`}>
+      {state === "working" ? (
+        <span className="fl-beat-orb" aria-hidden="true" />
+      ) : (
+        <span className={`fl-beat-ic ${state === "done" ? "fl-beat-tick" : "fl-beat-x"}`}>
+          {state === "done" ? tick : cross}
+        </span>
+      )}
+      <span className="fl-beat-label">{children}</span>
+    </div>
+  );
+}
+
+/** The resolved approval card: the ask's own M1 shape, settled — the headline
+ *  stays, muted by the shell, and the resolution is its quiet line. Same shell
+ *  as the consent card (spec §16 — one shell everywhere).
+ *
+ *  A FAILED receipt keeps its own register: the thread's danger ✕ in front of
+ *  the line, and the line in danger colour. Muting the failure to the same grey
+ *  as "Approved — ran" left the WORDS as the only difference between a call
+ *  that landed and one that didn't, on a receipt people scan rather than read. */
+export function ResolvedApprovalCard({ summary, ok, line, detail }: {
+  summary: string;
+  ok: boolean;
+  line: string;
+  detail?: ReactNode;
+}) {
+  return (
+    <CardShell label={`Approval — ${line}`} className={`fl-approval${ok ? " fl-approval-approved" : ""}`} settled>
+      <CardLine className="fl-approval-ask">{summary}</CardLine>
+      <p className={`fl-approval-sub${ok ? "" : " fl-approval-sub--failed"}`}>
+        {ok ? null : cross}
+        {line}
+      </p>
+      {detail}
+    </CardShell>
+  );
+}
+
+function executedCard(summary: string, outcome: ToolOutcome | undefined): ReactNode {
+  // A call parked at the MCP door runs in the outside agent's own retry, not
+  // server-side, so its receipt carries no result to show — only that the yes
+  // was spent by the call it authorized.
+  if (outcome === undefined) return <ResolvedApprovalCard summary={summary} ok line={APPROVAL_LINES.ran} />;
+  if (outcome.status === "ok") {
+    // The result reads as the shell's ONE body — field rows, never the raw JSON
+    // dump this used to print at an end user (spec §16.2). `resultRows`, not
+    // `fieldRows`: what came BACK is a result, and rows that came back labelled
+    // "Input" read as the call's arguments. It answers any shape (law 1 — the
+    // body is not chosen by its data), so a bare value is one row too, where the
+    // object-only guard this replaces showed a person nothing at all.
+    const rows = resultRows(outcome.output);
+    const detail = rows.length > 0 ? <CardFields rows={rows} label="Result" /> : undefined;
+    return <ResolvedApprovalCard summary={summary} ok line={APPROVAL_LINES.ran} detail={detail} />;
+  }
+  // The resumed call itself failed (error/blocked/…): the honest record, in
+  // the thread's existing "couldn't finish" vocabulary.
+  //
+  // M36 — the WIRE's own sentence used to ride the card. `outcome.error.message`
+  // is the tool's/provider's text (ids, routes, stack-shaped detail) and
+  // `outcome.reason` is a policy sentence written for whoever configures the
+  // policy; `outcome.status` is a slug. This is a host's own page, so the line
+  // above is what a person reads and the wire's half is a dev-mode aid.
+  const detail = outcome.status === "error"
+    ? outcome.error.message
+    : outcome.status === "blocked"
+      ? outcome.reason
+      : outcome.status;
+  return (
+    <ResolvedApprovalCard
+      summary={summary}
+      ok={false}
+      line="Approved — couldn't finish"
+      detail={
+        <div className="fl-card-byline">
+          {developmentMode() ? detail : "Nothing changed. Ask again when you're ready."}
+        </div>
+      }
+    />
+  );
+}
+
+/**
+ * Approve/deny for a guarded call parked from a BYO agent loop
+ * (`vendo/approval-ref@1`). The wire owns the state — this embed polls
+ * `GET /approvals/:id` and resolves in place to the executed outcome,
+ * "declined", or "expired" (the frozen `VendoApprovalEmbedState` vocabulary).
+ */
+export function VendoApprovalEmbed({ refValue, theme }: VendoApprovalEmbedProps) {
+  const { client } = useVendoProvider();
+  const { approvalId, summary } = refValue;
+
+  const fetcher = useCallback(async (): Promise<ApprovalResolution | null> => {
+    try {
+      return await client.approvals.get(approvalId);
+    } catch (reason) {
+      // An approval the wire no longer knows is no longer actionable: the
+      // TTL sweep (or a store erase) got there first. Same terminal state.
+      if (isVendoError(reason) && reason.code === "not-found") {
+        return { state: "expired" };
+      }
+      throw reason;
+    }
+  }, [client, approvalId]);
+
+  // Poll until the state is terminal; useResource disarms when pollMs clears.
+  const [pollMs, setPollMs] = useState<number | undefined>(APPROVAL_POLL_MS);
+  const { data, error, refresh } = useResource<ApprovalResolution | null>(
+    fetcher,
+    null,
+    pollMs === undefined ? {} : { pollMs },
+  );
+  useEffect(() => {
+    if (data !== null && data.state !== "pending") setPollMs(undefined);
+  }, [data]);
+
+  const decide = useCallback(
+    async (decision: ApprovalDecision) => {
+      await client.approvals.decide(approvalId, decision);
+      await refresh();
+    },
+    [client, approvalId, refresh],
+  );
+
+  let body: ReactNode;
+  if (data === null) {
+    body = error !== undefined
+      ? (
+          // Same shell, so a failed lookup is not its own bespoke article.
+          // Ruling 18 — a non-conversational surface owes the reader BOTH halves:
+          // one honest line, and a way to try again. M36 — the wire's own
+          // sentence is not that line (it carries approval ids and transport
+          // detail); it stays a dev-mode aid.
+          <CardShell label={`Approval — ${summary}`} className="fl-approval">
+            <CardHead
+              eyebrow={CARD_EYEBROWS.resolved}
+              title={summary}
+            />
+            <CardLine>Vendo couldn’t reach this approval just now.</CardLine>
+            <div role="alert" className="fl-error">
+              {developmentMode() ? error.message : "Nothing was decided."}
+            </div>
+            <CardActions>
+              <button className="fl-btn fl-btn-primary" type="button" onClick={() => void refresh()}>
+                Try again
+              </button>
+            </CardActions>
+          </CardShell>
+        )
+      : <BeatLine state="working">{summary}</BeatLine>;
+  } else if (data.state === "pending") {
+    // No ask to show means the decision is already running server-side — the
+    // same beat this embed opens with, and the poll is still armed.
+    body = data.request === undefined
+      ? <BeatLine state="working">{summary}</BeatLine>
+      : <ApprovalCard approval={data.request} onDecide={decide} />;
+  } else if (data.state === "executed") {
+    body = executedCard(summary, data.outcome);
+  } else if (data.state === "declined") {
+    body = <ResolvedApprovalCard summary={summary} ok={false} line={APPROVAL_LINES.declined} />;
+  } else {
+    body = <ResolvedApprovalCard summary={summary} ok={false} line="Expired — no longer waiting for approval" />;
+  }
+
+  return (
+    <ChromeRoot theme={theme}>
+      <div data-vendo-embed="approval">{body}</div>
+    </ChromeRoot>
+  );
+}
+
+/**
+ * Inline generated app (`vendo/app-ref@1`): the build-beat bar while the
+ * build streams, then the live app. In-app interactions go over the wire
+ * (`apps.call`), never through the host's agent loop.
+ */
+export function VendoAppEmbed({ refValue, theme }: VendoAppEmbedProps) {
+  const { client, components } = useVendoProvider();
+  const { appId, title } = refValue;
+  // A press inside the embedded app that parks on the guard asks its question
+  // HERE, over the surface the person pressed it on — the same seam VendoSlot
+  // mounts (one modal per mount; it portals to <body>).
+  const approval = useApprovalModal();
+  // Retry (criterion 8, speed-core): a retryable terminal failure re-issues
+  // the create; the fresh build gets its own id, so the poll loop keys on
+  // activeAppId rather than the ref's original.
+  const [activeAppId, setActiveAppId] = useState(appId);
+  const [surface, setSurface] = useState<OpenSurface>();
+  const [failed, setFailed] = useState<{ reason: string; retryable?: boolean; prompt?: string }>();
+  // S4 — the app's geometry as the build writes it, off the SAME poll. Held
+  // across polls that carry none, so a draft that stops painting for a beat
+  // leaves the silhouette up instead of snapping back to the bare skeleton.
+  const [forming, setForming] = useState<UIPayload>();
+  // "Progress = chat status lines only" (FINAL SPEC v1) — the build's own latest
+  // line, off the SAME poll. Held like the silhouette: a poll that carries none
+  // leaves the last line up rather than snapping back to the generic bar.
+  const [status, setStatus] = useState<string>();
+
+  useEffect(() => {
+    setActiveAppId(appId);
+  }, [appId]);
+
+  useEffect(() => {
+    setSurface(undefined);
+    setFailed(undefined);
+    setForming(undefined);
+    setStatus(undefined);
+    const startedAt = Date.now();
+    let cancelled = false;
+    let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const resolveFailed = (failure: { reason: string; retryable?: boolean; prompt?: string }): void => {
+      done = true;
+      setFailed(failure);
+    };
+    const resolveSurface = (next: OpenSurface): void => {
+      done = true;
+      setSurface(next);
+    };
+    // 0.4.5 E2E cert (defect D) — the ABSOLUTE deadline. The poll below only
+    // checks elapsed time when a wire request SETTLES, so a request that
+    // hangs (or a wire that stops answering) used to leave the building beat
+    // spinning past any deadline. This timer depends on nothing but the
+    // clock: whatever the polls are doing, the beat resolves to the failed
+    // vocabulary at the deadline.
+    const deadlineTimer = setTimeout(() => {
+      if (cancelled || done) return;
+      resolveFailed({ reason: "the build never finished" });
+    }, APP_BUILD_DEADLINE_MS);
+    // Self-scheduling poll (useResource's pacing rule): the next attempt is
+    // armed only after the current one settles. `vendo_make` returns
+    // fast and the build streams server-side, so until there is an app to
+    // serve the flagged poll answers a quiet `{kind:"pending"}` (a wire that
+    // predates the flag still 404s — the catch arm keeps the same cadence, so
+    // older servers only lose the quiet console). Keep asking until the app
+    // lands, the build reports a terminal failure, or the deadline turns the
+    // beat into the failed vocabulary.
+    const attempt = async () => {
+      try {
+        const next = await withPollTimeout(client.apps.open(activeAppId, { pending: true }), APP_OPEN_TIMEOUT_MS);
+        if (cancelled || done) return;
+        // A terminal build failure resolves the embed PROMPTLY with its
+        // reason — the same in-place resolution a denied/expired approval
+        // gets — never a wait for the client build deadline.
+        if (next.kind === "failed") {
+          resolveFailed({
+            reason: next.reason,
+            ...(next.retryable === undefined ? {} : { retryable: next.retryable }),
+            ...(next.prompt === undefined ? {} : { prompt: next.prompt }),
+          });
+          return;
+        }
+        if (next.kind !== "pending") {
+          resolveSurface(next);
+          return;
+        }
+        if (next.status !== undefined) setStatus(next.status);
+        // Geometry only — the server ships no figure a repair round could
+        // change (apps wire-types.ts), so this paints assembly, never a draft.
+        if (next.tree !== undefined) setForming(next.tree);
+        if (Date.now() - startedAt >= APP_BUILD_DEADLINE_MS) {
+          resolveFailed({ reason: "the build never finished" });
+          return;
+        }
+      } catch (reason) {
+        if (cancelled || done) return;
+        if (Date.now() - startedAt >= APP_BUILD_DEADLINE_MS) {
+          resolveFailed({ reason: asError(reason).message });
+          return;
+        }
+      }
+      timer = setTimeout(() => void attempt(), APP_POLL_MS);
+    };
+    void attempt();
+    return () => {
+      cancelled = true;
+      clearTimeout(deadlineTimer);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [client, activeAppId]);
+
+  // Re-issue the create: the persisted prompt when the failed record carries
+  // it (the exact original request), else the ref title (a capped collapse of
+  // the prompt — all older records offer). The building beat returns while
+  // the create runs; the fresh app id re-arms the poll loop above.
+  const retry = useCallback(async () => {
+    const prompt = failed?.prompt ?? title;
+    setSurface(undefined);
+    setFailed(undefined);
+    setForming(undefined);
+    setStatus(undefined);
+    try {
+      const created = await client.apps.create({ prompt });
+      setActiveAppId(created.id);
+    } catch (reason) {
+      // The retried build failed too: back to the failed vocabulary with the
+      // button still armed — never a silent blank.
+      setFailed({ reason: asError(reason).message, retryable: true, prompt });
+    }
+  }, [client, failed, title]);
+
+  const building = surface === undefined && failed === undefined;
+  // The forming tree rides the SAME frame as the finished app, so the build
+  // arriving is a repaint of the silhouette already on screen, not a remount.
+  const shown: OpenSurface | undefined = surface
+    ?? (forming === undefined ? undefined : { kind: "tree", payload: forming });
+  return (
+    <ChromeRoot theme={theme}>
+      {/* The thread lane's app boundary: the bar narrates forming → live via
+          the shared data-state contract ("building" | "ready"). */}
+      <div className="fl-uihost fl-appcard" data-vendo-embed="app">
+        <div className="fl-appcard-bar" data-state={building ? "building" : "ready"}>
+          <span className="fl-appcard-dot" aria-hidden="true" />
+          <span className="fl-boot-labels fl-appcard-name">
+            {/* The build's own line when it has one — same slot, same type, so
+                a status is a change of words and never of geometry. */}
+            {/* A live region, because this line is the WHOLE progress channel
+                for a detached build: the words change under the reader without
+                anything else on the page moving, so nothing else would say so. */}
+            <span className="fl-boot-building" role="status" aria-live="polite" aria-hidden={!building}>{status ?? `Building ${title}…`}</span>
+            <span className="fl-boot-ready" aria-hidden={building}>{title}</span>
+          </span>
+          {/* The placement affordance, only once the view is READY — the same
+              component, and so the same registry rule, the thread card's bar
+              carries (§8: a build gets one moving thing). It targets the app
+              actually on screen, so after a retry that is the replacement
+              build's id. */}
+          {surface !== undefined ? (
+            <PlacementAction
+              appId={activeAppId}
+              payload={surface.kind === "tree" ? surface.payload : undefined}
+            />
+          ) : null}
+          <span className="fl-boot-hairline" aria-hidden="true" />
+        </div>
+        <div className="fl-appcard-body">
+          {/* A build that ran out of road says so, even if a silhouette is up. */}
+          {failed !== undefined ? (
+            <>
+              <BeatLine state="error">{title} — couldn't finish</BeatLine>
+              {/* The reason the build actually gave, in the chrome's own voice —
+                  the runtime classifies it before it ever reaches the wire
+                  ("timed out", "quota exhausted", the missing `@ai-sdk/*`
+                  package a host has to install), and it is the only half of the
+                  failure worth a reader's time. Same reader as the thread's
+                  block; the operator's fuller record keeps the home it already
+                  has, the server's `[vendo] app build failed (app_…)` log
+                  line. */}
+              <div className="fl-card-byline">{buildFailureNotice(failed.reason)}</div>
+              {failed.retryable === true && (
+                <CardActions>
+                  <button className="fl-btn fl-btn-primary" type="button" onClick={() => void retry()}>
+                    Try again
+                  </button>
+                </CardActions>
+              )}
+            </>
+          ) : shown !== undefined ? (
+            <AppFrame
+              surface={shown}
+              // A sealed bundle is addressed by app — its frame's src is
+              // `/apps/<id>/bundle/<hash>`, so the id is not optional here.
+              appId={activeAppId}
+              components={components}
+              onParked={approval.onParked}
+              // Actions bind to the app actually being SHOWN: after a retry
+              // that is the replacement build's id, never the original failed
+              // record (checker F5). A forming silhouette carries no action
+              // bindings at all, so nothing can fire before the build lands.
+              onAction={({ action, payload }) => client.apps.call(activeAppId, action, payload ?? {})}
+            />
+          ) : (
+            <span className="fl-slot-skel" role="status" aria-label={`Building ${title}`}>
+              <span className="fl-skel-line" style={{ width: "54%" }} />
+              <span className="fl-skel-line" style={{ width: "78%" }} />
+              <span className="fl-skel-line" style={{ width: "42%" }} />
+            </span>
+          )}
+        </div>
+      </div>
+      {approval.modal}
+    </ChromeRoot>
+  );
+}
+
+/**
+ * The dispatcher: give it any `vendo_*` tool output and it renders the right
+ * embed by `parseVendoToolEnvelope` — or nothing for plain data (the action
+ * executed cleanly; the agent already consumed the result).
+ */
+export function VendoToolResult({ output, theme }: VendoToolResultProps) {
+  const envelope = parseVendoToolEnvelope(output);
+  if (envelope === null) return null;
+  if (envelope.kind === VENDO_APP_REF_KIND) return <VendoAppEmbed refValue={envelope} theme={theme} />;
+  // The record it just armed, in the card the thread already renders
+  // automations with — the envelope's one line IS the rule sentence.
+  if (envelope.kind === VENDO_AUTOMATION_REF_KIND) {
+    return (
+      <ChromeRoot theme={theme}>
+        <AutomationCard name={envelope.summary} enabled={envelope.armed} />
+      </ChromeRoot>
+    );
+  }
+  return <VendoApprovalEmbed refValue={envelope} theme={theme} />;
+}

@@ -1,0 +1,32 @@
+---
+title: "E-MCP-008"
+sidebarTitle: "E-MCP-008"
+description: "Retired: doctor no longer fetches the deployed registry auth challenge."
+---
+
+```text retired
+E-MCP-008 — retired, doctor no longer emits this code
+```
+
+`error_code: E-MCP-008` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when the deployed copy of `/.well-known/mcp-registry-auth`
+did not start with `v=MCPv1`. Doctor fetched that file from the live origin
+over HTTP, and it no longer makes any request.
+
+## The fix
+
+Nothing to do. Doctor still checks the copy in your repo, and that check
+reports as [E-MCP-007](/production/troubleshooting/e-mcp-007).
+
+## Related errors
+
+- [E-MCP-007](/production/troubleshooting/e-mcp-007) — the same challenge file, checked on disk
+- [E-MCP-004](/production/troubleshooting/e-mcp-004) — `server.json` registry validation, also checked on disk

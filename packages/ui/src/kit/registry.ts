@@ -1,0 +1,70 @@
+/**
+ * The Kit registry (W2 §The Kit). The SPECS (zod schemas, prop classes,
+ * docs, examples) live in `@vendoai/core` since W3 (the engine consumes them
+ * there); this module owns the React implementations. The registry drift
+ * test asserts `KIT_COMPONENTS` covers exactly `KIT_SPECS`.
+ */
+import type { ComponentType } from "react";
+
+// Components
+import { Card, Divider, Grid, Row, SplitPane, Stack, Surface } from "./layout.js";
+import { EnumBadge, Text } from "./values.js";
+import { Icon } from "./icon.js";
+import { DataTable } from "./data/data-table.js";
+import { TableRow } from "./data/table-row.js";
+import { CardList } from "./data/card-list.js";
+import { Calendar } from "./data/calendar.js";
+import { Stat } from "./data/stat.js";
+import { Badge } from "./data/badge.js";
+import { KeyValue } from "./data/key-value.js";
+import { Timeline } from "./data/timeline.js";
+import { Avatar } from "./data/avatar.js";
+import { CodeBlock } from "./data/code-block.js";
+import { LineChart } from "./charts/line.js";
+import { BarChart } from "./charts/bar.js";
+import { DonutChart } from "./charts/donut.js";
+import { Sparkline } from "./charts/sparkline.js";
+import { Progress } from "./charts/progress.js";
+import { Button } from "./forms/button.js";
+import { Link } from "./link.js";
+import { Input } from "./forms/input.js";
+import { Select } from "./forms/select.js";
+import { DatePicker } from "./forms/date-picker.js";
+import { Textarea } from "./forms/textarea.js";
+import { Checkbox } from "./forms/checkbox.js";
+import { Switch } from "./forms/switch.js";
+import { Radio } from "./forms/radio.js";
+import { Slider } from "./forms/slider.js";
+import { SegmentedControl } from "./forms/segmented-control.js";
+import { Combobox } from "./forms/combobox.js";
+import { DateRange } from "./forms/date-range.js";
+import { Form } from "./forms/form.js";
+import { Disclaimer } from "./forms/disclaimer.js";
+import { Tabs } from "./feedback/tabs.js";
+import { Callout } from "./feedback/callout.js";
+import { Accordion } from "./feedback/accordion.js";
+import { EmptyState } from "./feedback/empty-state.js";
+import { Steps } from "./feedback/steps.js";
+import { Menu } from "./feedback/menu.js";
+import { Tooltip } from "./feedback/tooltip.js";
+import { Modal } from "./overlay/modal.js";
+import { Sheet } from "./overlay/sheet.js";
+import { Toast } from "./overlay/toast.js";
+
+export {
+  KIT_SPECS,
+  kitComponentNames,
+  kitSpec,
+} from "@vendoai/apps/contract";
+
+/** Name → React component, for the tree renderer. */
+export const KIT_COMPONENTS: Readonly<Record<string, ComponentType<Record<string, never>>>> = {
+  Stack, Row, Grid, SplitPane, Surface, Card, Divider,
+  Text, EnumBadge, Icon,
+  DataTable, TableRow, CardList, Calendar, Stat, Badge, KeyValue, Timeline, Avatar, CodeBlock,
+  LineChart, BarChart, DonutChart, Sparkline, Progress,
+  Input, Select, DatePicker, Textarea, Checkbox, Button, Link, Form, Disclaimer,
+  Switch, Radio, Slider, SegmentedControl, Combobox, DateRange,
+  Tabs, Callout, Accordion, EmptyState, Steps, Menu, Tooltip,
+  Modal, Sheet, Toast,
+} as unknown as Record<string, ComponentType<Record<string, never>>>;

@@ -1,0 +1,40 @@
+---
+title: "E-AUTH-001"
+sidebarTitle: "E-AUTH-001"
+description: "Retired: doctor no longer posts a credential probe to your host, so it cannot see credentials get stripped."
+---
+
+```text retired
+E-AUTH-001 — retired, doctor no longer emits this code
+```
+
+`error_code: E-AUTH-001` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when doctor posted a seeded cookie and bearer header to
+`<base>/doctor/present` and they did not reach your host API. Doctor checks
+files on disk now. It sends no requests, so there is no round trip to watch.
+
+## The fix
+
+The problem is still real, and you check it yourself now. Open your app,
+run a turn that calls your own API, and watch the call in the dev server
+log: if it arrives without your session cookie, the wire did not trust the
+origin it was called on.
+
+Set `VENDO_BASE_URL` to the host origin your app actually runs on.
+
+```bash .env.local
+VENDO_BASE_URL=http://localhost:3000
+```
+
+## Related errors
+
+- [E-CFG-003](/production/troubleshooting/e-cfg-003) — a `VENDO_BASE_URL` mismatch doctor still catches on disk
+- [E-AUTH-004](/production/troubleshooting/e-auth-004) — the away-call sibling of this check, also retired

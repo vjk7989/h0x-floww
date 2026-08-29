@@ -1,0 +1,39 @@
+---
+title: "E-MCP-003"
+sidebarTitle: "E-MCP-003"
+description: "Retired: doctor no longer fetches the MCP server card over HTTP."
+---
+
+```text retired
+E-MCP-003 — retired, doctor no longer emits this code
+```
+
+`error_code: E-MCP-003` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when the door's server card did not parse. Doctor fetched
+the card over HTTP, and it no longer makes any request.
+
+## The fix
+
+The card still has to parse, and you check it yourself now.
+
+```bash
+curl -s https://your-app.example.com/.well-known/mcp/server-card.json
+```
+
+A correct response is a JSON object with a `name` string and a `transports`
+array. If it comes back wrong, confirm the door's well-known routes are
+mounted at that origin and that nothing in front of the app (a proxy, a
+rewrite, a CDN edge rule) intercepts the response.
+
+## Related errors
+
+- [E-MCP-004](/production/troubleshooting/e-mcp-004) — `server.json` registry validation, still checked on disk
+- [E-MCP-006](/production/troubleshooting/e-mcp-006) — `server.json` that is not valid JSON, still checked on disk

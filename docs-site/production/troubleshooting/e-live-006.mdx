@@ -1,0 +1,37 @@
+---
+title: "E-LIVE-006"
+sidebarTitle: "E-LIVE-006"
+description: "Retired: doctor no longer loads your app's root page, so it cannot see it crash."
+---
+
+```text retired
+E-LIVE-006 — retired, doctor no longer emits this code
+```
+
+`error_code: E-LIVE-006` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when your app's root page returned a 5xx while the wire
+itself answered fine. Doctor reads files and never loads a page, so it
+cannot see the site crash.
+
+## The fix
+
+The crash is still real, and you check it yourself now: open your app in a
+browser and read the dev server log if the page 500s.
+
+The most common cause right after a fresh install is the component registry
+imported in a Server Component layout and passed into the client provider.
+React refuses to serialize component references across that boundary, so
+every page 500s. Declare the registry in your own `"use client"` file and
+mount `<VendoProvider>` there.
+
+## Related errors
+
+- [E-WIRE-004](/production/troubleshooting/e-wire-004) — the provider mount this fix changes, still checked on disk

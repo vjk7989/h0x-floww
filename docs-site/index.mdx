@@ -1,0 +1,91 @@
+---
+title: "Set up Vendo with your agent"
+sidebarTitle: "Quickstart"
+tag: "Start here"
+description: "One paste. Your coding agent installs Vendo, runs init, and wires it into whatever your repo already is."
+---
+
+import AgentPromptCard from "/snippets/agent-prompt-card.mdx"
+
+<AgentPromptCard />
+
+Your agent picks the right setup for your repo. You confirm it.
+
+## Quickstart
+
+No agent handy? Do it by hand. Three steps.
+
+<Steps>
+  <Step title="Install">
+    One package, installed in the app you already have, on Node 20 or newer.
+    Only the blocks your project uses ship.
+
+    <CodeGroup>
+
+    ```bash npm
+    npm install @vendoai/vendo
+    ```
+
+    ```bash pnpm
+    pnpm add @vendoai/vendo
+    ```
+
+    </CodeGroup>
+
+    On pnpm the install downloads everything, then exits 1 with `Ignored build
+    scripts: @mongodb-js/zstd, esbuild, node-liblzma`. None of the three needs
+    compiling — Vendo reaches esbuild through its Node API, and the other two
+    are the shell's optional native `tar` backends behind guarded imports
+    nothing calls. pnpm writes the three names into your `pnpm-workspace.yaml`
+    with a placeholder; set all three to `false` and install again.
+
+    ```yaml pnpm-workspace.yaml
+    allowBuilds:
+      '@mongodb-js/zstd': false
+      esbuild: false
+      node-liblzma: false
+    ```
+  </Step>
+
+  <Step title="Run npx vendo init">
+    init reads your repo before it asks anything, asks how people will use your
+    agent, and writes the wiring. It ends with the list of files it touched and
+    a link to the quickstart for the path you chose.
+
+    ```bash
+    npx vendo init
+    ```
+  </Step>
+
+  <Step title="Continue in your direction">
+    The init was the same for everyone. From here the code differs: the answer
+    you gave that first question is the path you are on. Continue with the one
+    you picked.
+
+    <div className="direction-cards">
+      <CardGroup cols={3}>
+        <Card title="Vendo's Full-Stack Agent" href="/product/quickstart" img="/images/cards/direction-product.svg">
+          Vendo runs the loop and renders screens in your brand.
+
+          `<VendoProvider>`
+
+          Quickstart →
+        </Card>
+        <Card title="In your existing agent" href="/existing-agent/quickstart" img="/images/cards/direction-existing-agent.svg">
+          Keep your loop. Vendo adds tools and renders the result.
+
+          `vendoTools(vendo)`
+
+          Quickstart →
+        </Card>
+        <Card title="From outside agents" href="/outside-agents/quickstart" img="/images/cards/direction-outside-agents.svg">
+          Your own agent, acting as the signed-in user.
+
+          `createVendo({ mcp: true })`
+
+          Quickstart →
+        </Card>
+      </CardGroup>
+    </div>
+  </Step>
+</Steps>

@@ -1,0 +1,30 @@
+---
+title: "E-AUTH-006"
+sidebarTitle: "E-AUTH-006"
+description: "Retired: doctor no longer needs a running app, so no check is blocked by a stopped one."
+---
+
+```text retired
+E-AUTH-006 — retired, doctor no longer emits this code
+```
+
+`error_code: E-AUTH-006` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code marked the `actAs` probe as skipped because your app was not
+answering. Doctor reads files, so a stopped app blocks nothing.
+
+## The fix
+
+Nothing to do.
+
+## Related errors
+
+- [E-AUTH-004](/production/troubleshooting/e-auth-004) — what that probe used to catch, and how to check it by hand
+- [E-CFG-001](/production/troubleshooting/e-cfg-001) — a config check doctor still runs

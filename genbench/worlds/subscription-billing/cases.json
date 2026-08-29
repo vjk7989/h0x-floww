@@ -1,0 +1,201 @@
+[
+  {
+    "id": "billing-overview",
+    "lane": "screen",
+    "prompt": "Give me a billing overview for this month: MRR, what we've collected, what's still owed, and how my subscriptions break down by status.",
+    "pass": [
+      "shows MRR as $1,113.10 and $598.00 as collected this month",
+      "breaks the subscriptions down by status with a count for active, trialing, past due and paused",
+      "shows the amount still outstanding and the MRR at risk from past-due subscriptions",
+      "presents MRR as the headline figure rather than burying it in a table"
+    ],
+    "tags": ["display"],
+    "shape": "dashboard"
+  },
+  {
+    "id": "dunning-queue",
+    "lane": "screen",
+    "prompt": "Show me every failed payment we're still retrying, and give me a button to retry the charge now.",
+    "pass": [
+      "lists both failed payments with the customer, the amount, which attempt it is on and why the card failed",
+      "shows that Tessellate Studio has used all four attempts and has no next retry scheduled",
+      "offers a retry control on each row",
+      "pressing a row's retry control calls retry_payment for that row's invoice"
+    ],
+    "tags": ["action"],
+    "shape": "table"
+  },
+  {
+    "id": "plan-mix-chart",
+    "lane": "screen",
+    "prompt": "Chart how my subscribers are spread across plans, biggest plan first.",
+    "pass": [
+      "draws a chart of subscribers per plan rather than only listing them",
+      "every plan the tool returned is on the chart, the archived legacy plan included",
+      "the subscriber counts read 3 Starter, 3 Growth, 2 Scale, 1 Scale (annual) and 1 Pro (legacy)",
+      "the plans read biggest first"
+    ],
+    "tags": ["display"],
+    "shape": "chart"
+  },
+  {
+    "id": "account-detail-ovid",
+    "lane": "screen",
+    "prompt": "Pull up the Ovid & Sons account: their plan, the card on file, what they owe us, and the history of the payment failing.",
+    "pass": [
+      "shows Ovid & Sons on the Growth plan with a past-due status",
+      "shows the card's brand and last four digits and its expiry",
+      "shows the unpaid invoice INV-2050 with its amount",
+      "shows the account's event history, newest event first"
+    ],
+    "tags": ["display"],
+    "shape": "detail"
+  },
+  {
+    "id": "renewal-schedule",
+    "lane": "screen",
+    "prompt": "Lay out my upcoming renewals by date so I can see who bills when, and what each one will charge.",
+    "pass": [
+      "orders or groups the renewals by renewal date, earliest first",
+      "shows Halden Freight renewing on Aug 24 and Quarry Road Coffee on Aug 28",
+      "does not present the canceled subscription as an upcoming renewal",
+      "shows an amount beside each renewal, $89.10 beside Halden Freight and $29.00 beside Quarry Road Coffee"
+    ],
+    "tags": ["display"],
+    "shape": "timeline"
+  },
+  {
+    "id": "coupon-apply-form",
+    "lane": "screen",
+    "prompt": "Steepgrove Bakery asked for a discount. Build me a form that puts one of our coupons on their subscription.",
+    "pass": [
+      "the form names Steepgrove Bakery's subscription as what the coupon lands on",
+      "offers a choice between the coupons and shows what each one takes off",
+      "does not offer the expired LAUNCH50 coupon as a usable choice",
+      "submitting calls apply_coupon with Steepgrove Bakery's subscription id and the chosen coupon code"
+    ],
+    "tags": ["action"],
+    "shape": "form"
+  },
+  {
+    "id": "write-off-unpayable",
+    "lane": "screen",
+    "prompt": "Show me everything still unpaid, ticked to start so I can untick anything worth chasing, and let me void the rest in one go — with a reason on the screen and a confirmation step before anything is written off.",
+    "pass": [
+      "lists only the unpaid invoices — the open one and the two past due — and no paid, voided or refunded ones",
+      "arrives with all three ticked and shows the total that would be written off, $177.83",
+      "a reason field sits with the write-off control, and confirming is a second step rather than the same press",
+      "the confirmation names what it would write off — three invoices, $177.83 — and carries the reason the field holds"
+    ],
+    "tags": ["action"],
+    "shape": "table"
+  },
+  {
+    "id": "dunning-queue-empty",
+    "lane": "screen",
+    "prompt": "Show me every failed payment we're still retrying.",
+    "pass": [
+      "says nothing is in the retry queue right now rather than showing an empty table",
+      "shows no retry attempt count, next-retry date or card-failure reason for any invoice",
+      "offers no retry control"
+    ],
+    "tags": ["display"],
+    "shape": "empty-state",
+    "data": { "list_dunning_queue": { "data": [] } }
+  },
+  {
+    "id": "overage-true-up-watch",
+    "lane": "screen",
+    "prompt": "Which customers are running out of their included API calls this period, and what would the overage bill them right now?",
+    "pass": [
+      "shows every customer's calls used against their plan's included allowance, ordered by share of allowance used, highest first",
+      "flags Northwind Labs and Brightpath Clinics as over their allowance and shows the overage amount each owes",
+      "shows Halden Freight as nearly at its allowance with no overage owed",
+      "says which overage has already been invoiced and which has not"
+    ],
+    "tags": ["display"],
+    "shape": "table"
+  },
+  {
+    "id": "dunning-last-stand",
+    "lane": "screen",
+    "prompt": "Tessellate Studio's card expired and we've burned all four retries. Give me one screen to decide what happens to them: retry the charge, void the invoice, or cancel them at the end of the period.",
+    "pass": [
+      "shows Tessellate Studio's failed invoice with its amount, the card-expired reason and that all four attempts are spent",
+      "offers exactly the three choices asked for and nothing else",
+      "the retry choice calls retry_payment for INV-2044, the invoice on the screen",
+      "the void and the cancel each ask for confirmation first, and each confirmation says what it would do — void INV-2044, or cancel Tessellate Studio at the end of the period"
+    ],
+    "tags": ["action"],
+    "shape": "detail"
+  },
+  {
+    "id": "portal-self-serve",
+    "lane": "screen",
+    "prompt": "Turn on self-serve so subscribers can cancel and switch plans themselves without emailing us, and pick which parts of that are open.",
+    "pass": [
+      "shows all five portal switches — cancel, plan switch, payment method, promo codes, invoice history — each with its current state",
+      "shows cancel, plan switch and promo codes as currently off, and payment method and invoice history as currently on",
+      "each switch can be flipped on this screen, saving either as it is flipped or together with one save control",
+      "the save calls update_portal_settings with all five switches exactly as the screen is showing them, and the screen says when it fires"
+    ],
+    "tags": ["action"],
+    "shape": "settings",
+    "source": "Stripe Billing — Customer portal config, https://docs.stripe.com/customer-management/configure-portal"
+  },
+  {
+    "id": "plan-side-by-side",
+    "lane": "screen",
+    "prompt": "Lay our plans side by side so I can see what each one costs and includes before I pitch Northwind Labs an upgrade.",
+    "pass": [
+      "puts the plans beside each other as columns to compare, not stacked as one row per plan",
+      "the prices read $29.00, $99.00 and $299.00 a month and $3,228.00 a year",
+      "shows each plan's included API calls, from 25,000 on Starter to 500,000 on Scale",
+      "does not offer the archived Pro (legacy) plan as something to pitch"
+    ],
+    "tags": ["display"],
+    "shape": "comparison",
+    "source": "Chargebee — No-code pricing table, https://chargebee.com/docs/billing/2.0/hosted-capabilities/pricing-table"
+  },
+  {
+    "id": "new-subscription-wizard",
+    "lane": "screen",
+    "prompt": "Walk me through putting a brand-new customer on a plan — pick the plan, add a coupon if they've earned one, and confirm before it goes live.",
+    "pass": [
+      "the plan step offers the four active plans with their prices and not the archived Pro (legacy)",
+      "marks the coupon step as one that can be skipped, so a customer without a coupon still reaches the confirmation",
+      "nothing on the first step creates anything — no press before the confirmation calls create_subscription"
+    ],
+    "tags": ["display"],
+    "shape": "wizard",
+    "source": "Chargebee — Hosted checkout page, https://chargebee.com/subscription-management"
+  },
+  {
+    "id": "dunning-email-log",
+    "lane": "screen",
+    "prompt": "Show me every payment-failure email we've sent this month, most recent first, so I know who's already been nagged.",
+    "pass": [
+      "lists each email as its own dated entry rather than one row per invoice",
+      "the newest entry is Tessellate Studio's fourth attempt on Aug 11 and the oldest is its first on Aug 1",
+      "every entry shows who it went to, the invoice number and which attempt it followed",
+      "shows four emails to Tessellate Studio and two to Ovid & Sons"
+    ],
+    "tags": ["display"],
+    "shape": "list-feed",
+    "source": "Stripe Billing — Dunning email log, https://stripe.com/billing/features"
+  },
+  {
+    "id": "team-permissions",
+    "lane": "screen",
+    "prompt": "Show me who on the team can void invoices or cancel subscriptions, and let me change what each person is allowed to touch.",
+    "pass": [
+      "shows all four team members with their role and, for each, whether they can void invoices and cancel subscriptions",
+      "shows Ines Barlowe as the only one who can cancel subscriptions and Tobias Renn as able to do neither",
+      "offers a way to move a person to another role from this screen",
+      "changing someone's role calls update_team_role with that person's member id and the new role"
+    ],
+    "tags": ["action"],
+    "shape": "permissions",
+    "source": "Chargebee — Users & roles, https://chargebee.com/docs/billing/2.0/site-configuration/account_settings"
+  }
+]

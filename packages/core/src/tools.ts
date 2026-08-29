@@ -1,0 +1,545 @@
+import { z } from "zod";
+import { approvalIdSchema, jsonSchemaSchema, type ApprovalId, type Json, type JsonSchema } from "./ids.js";
+import type { RunContext } from "./run-context.js";
+
+const requiredJsonValueSchema = z.unknown().refine(
+  (value) => value !== undefined,
+  { message: "required JSON value is missing" },
+) as z.ZodType<{}>;
+
+/** 01-core §4 */
+export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+
+/** Every tool Vendo puts in an agent's hands is namespaced under this prefix,
+ *  so it never collides with the host loop's own tools and a renderer can tell
+ *  the two apart by name alone. Named here, in the layer everything shares,
+ *  because both the pack that WRITES the names (`VENDO_TOOL_PACK_PREFIX`) and
+ *  the chat surface that READS them (`isVendoToolPart`) hold this string. */
+export const VENDO_TOOL_PREFIX = "vendo_";
+
+/** 01-core §4/§16 — the app runtime's reserved agent-tool namespace. Tools
+ *  under this prefix are the only ones whose ok-outcome may carry an
+ *  OpenSurface onto the view channel; the agent bridge and the apps runtime
+ *  both read this constant so the seam is named once, here, instead of each
+ *  side string-matching the other. */
+export const VENDO_APPS_TOOL_PREFIX = "vendo_apps_";
+
+/**
+ * The ONE public tool for asking Vendo to make something to look at.
+ *
+ * It replaces `vendo_apps_create` and `vendo_apps_edit`. Two tools meant every
+ * calling agent — ours, a host's own SDK agent, an outside agent over MCP — had to
+ * decide "new or change?" before it could ask, and get it right. That is our
+ * routing decision, not theirs: the seam knows whether an app exists, and a caller
+ * that wants a specific one says so with `app`.
+ *
+ * Named here, outside the `vendo_apps_` prefix, because it is the front door
+ * rather than a member of the app runtime's family — and `isVendoAppsTool` below
+ * is what keeps the family's laws applying to it.
+ */
+export const VENDO_MAKE_TOOL = "vendo_make";
+
+/**
+ * The ONE public tool for asking Vendo to make something HAPPEN on a schedule,
+ * an event or a webhook — app-linked or app-less alike.
+ *
+ * It is a direct door onto the single create-automation operation, which
+ * `vendo_make`'s auto-arm sugar, the `vendo.json` fold-in and `agent.on` also
+ * reach. Named here beside `vendo_make` for the same reason: the descriptor,
+ * the executor and the envelope reader each hold this string.
+ */
+export const VENDO_AUTOMATE_TOOL = "vendo_automate";
+
+/**
+ * The two tools that put one of a person's own apps into a named place on the
+ * HOST'S page, and take it back out.
+ *
+ * Named here for the same reason `VENDO_MAKE_TOOL` is: three sides read them and
+ * a security-relevant name with three spellings drifts silently — the apps
+ * registry that implements them, the projection below that withholds them from
+ * an unattended run, and any door that names them in `withholdTools`.
+ */
+export const VENDO_APPS_PIN_TOOL = "vendo_apps_pin";
+export const VENDO_APPS_UNPIN_TOOL = "vendo_apps_unpin";
+
+/**
+ * The ask the BUILD door parks a standing card for (FINAL SPEC v1: no machine is
+ * spent without the person's explicit yes).
+ *
+ * No model is ever handed it — the door calls the guard with it directly — but
+ * the door that authors the descriptor and every surface that renders its card
+ * hold this string, and the card IS the consent moment, so it is named once here
+ * beside its title rather than spelled out on each side.
+ */
+export const VENDO_APP_BUILD_TOOL = "vendo_app_build";
+
+/** The read that makes those two callable: the slot ids the host's own pages
+ *  have reported. Named here beside them because a model that invents a slot id
+ *  aims a placement at a spot no page renders, and this is the only answer to
+ *  "which ones are real". */
+export const VENDO_SLOTS_LIST_TOOL = "vendo_slots_list";
+
+/**
+ * Tools whose whole effect is on a PERSON'S SCREEN.
+ *
+ * §12's projection withholds these from an unattended run exactly as it
+ * withholds a destructive one, for a reason of the same shape: there is no page
+ * and nobody looking at it. A firing that rearranged someone's dashboard while
+ * they were away would be a change they never asked for and never saw being
+ * made — and, because a placement EVICTS whatever held that slot, one they would
+ * come back to without knowing what happened.
+ *
+ * Keyed on the NAME rather than on the grade, because the grade is honestly
+ * `write`: with a person right there, putting your own app on your own page is a
+ * small reversible write that needs no ceremony. Grading them `destructive` to
+ * buy the withholding would lie to every other reader of the label (policy
+ * rules, the consent card, the automations planner).
+ */
+export const PRESENCE_ONLY_TOOLS: ReadonlySet<string> = new Set<string>([
+  VENDO_APPS_PIN_TOOL,
+  VENDO_APPS_UNPIN_TOOL,
+]);
+
+/**
+ * 01-core §16 — is this one of the app runtime's own tools?
+ *
+ * The prefix was the test in four places (two through the constant, two by
+ * hand-written string), and each one gates something different: whether an
+ * ok-outcome may put a tree on the view channel, whether the transcript renders a
+ * build card, whether the router's "what else can I do" menu lists it, whether an
+ * automation plan may call it. `vendo_make` sits outside the prefix, so a fourfold
+ * prefix check would have silently dropped every one of those laws for the one
+ * tool they matter most for. One predicate, one place to state the law.
+ */
+export const isVendoAppsTool = (name: string): boolean =>
+  name === VENDO_MAKE_TOOL || name.startsWith(VENDO_APPS_TOOL_PREFIX);
+
+/**
+ * The consumer-voice titles for the tools VENDO ITSELF projects (design §3:
+ * "surfaces render tool titles and verbs, never names — rendering-layer law").
+ *
+ * ONE table, because two sides must say the same words and neither can read the
+ * other's copy. Server-side, each descriptor authors its `title` from here, so
+ * `ToolListing.title` stops falling back to the identifier and the model is
+ * never handed `vendo_apps_open` as a tool's human label. Client-side, the
+ * render layer has no descriptor at all for a progress chip or an activity row —
+ * the wire tool part carries only a name — so it reads the same table rather
+ * than prettifying our own namespace into "Vendo apps edit…".
+ *
+ * Host tools are NOT here: a host authors its own titles (sync enrichment,
+ * `.vendo/overrides.json`), and inventing labels for someone else's API would be
+ * a guess. This table covers only what Vendo ships.
+ */
+export const VENDO_TOOL_TITLES: Readonly<Record<string, string>> = {
+  vendo_make: "Make you a screen",
+  vendo_automate: "Set this to run on its own",
+  vendo_apps_open: "Open the app",
+  // The one title a PERSON reads before anything is spent: this tool exists
+  // only to raise the consent card, and the card fell back to the prettified
+  // slug ("Vendo app build") on the one screen that has to be legible.
+  [VENDO_APP_BUILD_TOOL]: "Build this app for real",
+  vendo_apps_reseed: "Refresh a remixed piece",
+  vendo_apps_pin: "Pin the app to your page",
+  vendo_apps_unpin: "Take the app off your page",
+  vendo_slots_list: "Find the spots on your page",
+  vendo_apps_sql: "Work with the app's data",
+  vendo_knowledge_search: "Look it up in the docs",
+  vendo_user_files_list: "See the files you shared",
+  vendo_user_files_read: "Read a file you shared",
+  vendo_user_files_put: "Save a file to your files",
+  bash: "Work on your files",
+  vendo_text_me: "Text me",
+  // The verbs and `ask_user` authored these titles inline first; they moved here
+  // verbatim so the CLIENT can say them too — a live browser proof caught a verb
+  // narrating its identifier prettified while its descriptor carried a real title.
+  validate: "Check the app for mistakes",
+  schedule: "Change when this runs",
+  ask_user: "Ask you a question",
+  find_service_tools: "Look for an outside service",
+  use_service_tool: "Use an outside service",
+  list_connections: "Check your connected services",
+  request_connection: "Ask you to connect a service",
+  // Meta-tools: ai-SDK `dynamicTool`s with no descriptor at all, so the table is
+  // their ONLY title. The reporter fires on the honest-refusal path — the very
+  // turn the §3 leak was photographed on — and read "Vendo report capability
+  // miss…".
+  find_tools: "Look for the right tool",
+  vendo_report_capability_miss: "Note what I can't do",
+};
+
+/**
+ * The consumer-voice SENTENCE for the tools Vendo itself projects — {@link
+ * VENDO_TOOL_TITLES}' other half, here for the same reason: the consent card
+ * and the words-only surfaces must say one thing, and neither can read the
+ * other's copy.
+ *
+ * Ruling 14 keeps a DESCRIPTOR's `description` off the consent ladder at every
+ * rung, and this table does not reopen that door: a descriptor's sentence is
+ * authored for the MODEL or minted by extraction, while nothing can reach this
+ * table except copy Vendo wrote by hand for a person to read. Host tools are
+ * not here — a host's own sentence is its `ToolMeta.description`, and that
+ * still outranks this.
+ */
+export const VENDO_TOOL_NOTES: Readonly<Record<string, string>> = {
+  [VENDO_APP_BUILD_TOOL]: "Build this app for real: a sandbox installs the packages it needs,"
+    + " writes and tests the code, and the result is sealed. It spends a build machine,"
+    + " so it needs the person's yes.",
+};
+
+/** Prettify a raw tool id / slug into a human label:
+    `host_email_send` → "Email send", `fn:listInvoices` → "List invoices",
+    `gmail_GMAIL_CREATE_EMAIL_DRAFT` → "Gmail create email draft".
+
+    Beside {@link VENDO_TOOL_TITLES} rather than in the render layer for the same
+    reason that table is: §3's voice law binds every surface, and the engine writes
+    consent sentences with no UI on hand (`serviceToolPhrase` is its sibling for
+    service slugs). Chrome's `toolTitle` falls back to it; so does an automation's
+    display name, which is its first step. */
+export function humanizeToolName(raw: string): string {
+  const stripped = raw.replace(/^fn:/i, "").replace(/^host[_:.\- ]?/i, "");
+  const words = stripped
+    // camelCase / PascalCase boundaries
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    // any run of separators
+    .replace(/[._:\-\s]+/g, " ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+    .map(word => word.toLowerCase());
+  // Collapse consecutive duplicate tokens ("gmail GMAIL …" → "gmail …").
+  const deduped = words.filter((word, index) => word !== words[index - 1]);
+  if (deduped.length === 0) return raw;
+  const sentence = deduped.join(" ");
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
+}
+
+/**
+ * The description a MODEL is given for one tool: its human title first, then the
+ * operational text.
+ *
+ * §3's voice law is a rendering-layer law, and a model is the surface that writes
+ * a refusal or an explanation — it can only say a title it was told. Handed only
+ * `description`, the identifier is the sole proper noun in its context, which is
+ * how a live refusal reached a user reading `` `host_transferMoney` ``. The
+ * identifier stays the CALL name; this is the one place the human label enters
+ * the model's vocabulary.
+ *
+ * A title equal to the name is no title at all (`ToolListing.title` falls back to
+ * the name), and neither is a missing one — so the label falls back down the SAME
+ * ladder the render layer walks (`toolTitle`, ui/humanize.ts): our own table, then
+ * the prettified id. Dropping the label instead is what leaked
+ * `host_getClient` into a TaxDome answer — the screen's beat said "Get client"
+ * while the model, told to say the title and given none, had only the identifier.
+ * Both sides now read one ladder, so they cannot say different words.
+ */
+export function modelToolDescription(
+  tool: { name: string; title?: string; description: string },
+): string {
+  const authored = tool.title?.trim();
+  const title = authored === undefined || authored === "" || authored === tool.name
+    ? VENDO_TOOL_TITLES[tool.name] ?? humanizeToolName(tool.name)
+    : authored;
+  return `${title} — ${tool.description}`;
+}
+
+/** The message prefix the apps runtime stamps on a terminally failed BUILD's
+ *  error ("app build failed: <classified reason>").
+ *  The agent loop reads it to end the turn and raise the failed-build banner;
+ *  named once here so neither side string-matches the other. Only this class
+ *  ends a turn — a cheap create error (input validation, feature-flag
+ *  refusal) stays the model's to handle. */
+export const VENDO_APP_BUILD_FAILED_PREFIX = "app build failed";
+
+/** 01-core §4 — a grade someone actually assigned. `ungraded` is the absence
+ *  of one, so it is not a rung here: nothing may author "I don't know". */
+export type GradedRiskLabel = "read" | "write" | "destructive";
+
+/** Design §4 — the one question door, any seat.
+ *
+ *  The name lives in core because two sides read it and a security-relevant
+ *  name with two definitions drifts silently: the registry that implements it,
+ *  and the loop that ends a turn on it. */
+export const ASK_USER_TOOL = "ask_user";
+
+/** The agent's hands over the user's own files: one shell, in this process,
+ *  over the workspace (spec 2026-08-23 §1). Named here for `ASK_USER_TOOL`'s
+ *  reason — the registry that implements it lives in `@vendoai/harnesses` and the
+ *  composition that mounts it lives in `@vendoai/vendo`, and a tool name with two
+ *  spellings is a tool the guard grades under one and the loadout exempts under
+ *  the other.
+ *
+ *  Deliberately NOT `vendo_bash`: this is the same `bash` every model already
+ *  knows from every other agent harness, and the name is what teaches it. The
+ *  cost of leaving the `vendo_` prefix behind is that it is not covered by the
+ *  loadout's always-active exemption for our own tools, so composition names it
+ *  explicitly (`PROMPT_TAUGHT_TOOLS`) and the agent-menu projection exempts it
+ *  beside the connector four (`withAgentMenu`). */
+export const VENDO_BASH_TOOL = "bash";
+
+/** The connector dispatcher — the one tool whose real action is an ARGUMENT
+ *  rather than its name, because a single
+ *  name stands in for a third-party catalog of ~20,000 tools.
+ *
+ *  It lives here for the same reason `ASK_USER_TOOL` does, and one more: the
+ *  grant law below has to recognise it. "Allow this tool" means twenty thousand
+ *  actions on this one name and nothing like that on any other, so consent is
+ *  keyed on the slug (see {@link GrantScope}'s `service-tool`) — a rule three
+ *  packages read and none of them may spell differently. */
+export const USE_SERVICE_TOOL = "use_service_tool";
+
+/** The four permanent connector-discovery names — the whole door onto a
+ *  broker's catalog, however many tens of thousands of tools it holds.
+ *
+ *  Beside {@link USE_SERVICE_TOOL} because a THIRD side reads them: the loadout.
+ *  Not one of them carries the `vendo_*` prefix the always-active exemption keys
+ *  on, so a host with more tools than the initial cap — or any curated
+ *  `surfaces.agent` menu — silently dropped `request_connection` and
+ *  `list_connections` while the system prompt went on teaching both. These are
+ *  Vendo's own tools, not host API tools that explode in number, so they are
+ *  exempt like the rest of ours. */
+export const CONNECTOR_DISCOVERY_TOOLS = [
+  "find_service_tools",
+  USE_SERVICE_TOOL,
+  "list_connections",
+  "request_connection",
+] as const;
+
+/** 01-core §4 */
+export const gradedRiskLabelSchema = z.enum(["read", "write", "destructive"]) satisfies z.ZodType<GradedRiskLabel>;
+
+/** 01-core §4 — `ungraded` is explicit, not absence: a tool nobody (human,
+ *  judge, or protocol fact) has graded says so on the wire, and the guard's
+ *  default treats it like `destructive` and asks. */
+export type RiskLabel = GradedRiskLabel | "ungraded";
+
+/** 01-core §4 */
+export const riskLabelSchema = z.enum(["read", "write", "destructive", "ungraded"]) satisfies z.ZodType<RiskLabel>;
+
+/** 01-core §4 */
+export interface ToolDescriptor {
+  name: string;
+  description: string;
+  inputSchema: JsonSchema;
+  /** The tool's DECLARED result shape — extraction captures it from the host's
+   *  own contract (an OpenAPI 2xx `application/json` schema today) and never
+   *  invents one. Surfaces hand it to the model so a query's data fields are
+   *  known before any call, instead of learned by calling once and reading rows. */
+  outputSchema?: JsonSchema;
+  risk: RiskLabel;
+  /** Governance, not severity: this call needs a PERSON, every time. Checked
+   *  before rules, grants, and the judge, and none of them can suppress it —
+   *  each call earns its own input-bound, single-use approval. Orthogonal to
+   *  `risk`, which is a fact about what the action does. Host-authored files
+   *  may still spell it `critical` (its pre-rename name). */
+  confirmEach?: boolean;
+  /** A short human label for the surfaces that show this tool to a PERSON —
+   *  MCP clients' tool menus, approval cards. Presentation only: it never
+   *  changes what the tool can do, and absent it those surfaces fall back to
+   *  `name`. Sync's AI enrichment proposes it; `.vendo/overrides.json`
+   *  corrects it. */
+  title?: string;
+  /** The connectable toolkit this tool belongs to (04-actions §3), present
+   *  only on connector tools whose usefulness is gated by a per-user connected
+   *  account (e.g. Composio's gmail/slack). Composition seams read it to skip
+   *  work that is pointless without a connection — the apps runtime's
+   *  create-time shape probes skip unconnected toolkits. Metadata only: it
+   *  never changes what the tool can do, and execution still answers
+   *  `connect-required` on its own. */
+  toolkit?: string;
+}
+
+/** 01-core §4 */
+export const toolDescriptorSchema = z.object({
+  name: z.string().regex(TOOL_NAME_PATTERN),
+  description: z.string(),
+  inputSchema: jsonSchemaSchema,
+  outputSchema: jsonSchemaSchema.optional(),
+  risk: riskLabelSchema,
+  confirmEach: z.boolean().optional(),
+  title: z.string().optional(),
+  toolkit: z.string().optional(),
+}).passthrough() satisfies z.ZodType<ToolDescriptor>;
+
+/**
+ * Is this input schema BLIND — a fail-closed placeholder — rather than the
+ * host's own statement that the tool takes no arguments?
+ *
+ * `inputSchema` is REQUIRED on every descriptor and the extraction provenance
+ * marker never crosses the wire (the registry's descriptor whitelist), so the
+ * BYTES are all a prompt surface has. An object with no named properties that
+ * still admits additional ones — or one that declares nothing at all — is what
+ * every extractor emits when it could not read the arguments; a DECLARED
+ * no-argument tool closes with `properties: {}` and nothing else.
+ *
+ * The distinction is load-bearing: printing a blind schema reads to a model as
+ * "this tool takes no arguments", which is a confident lie, and the model then
+ * calls it with none.
+ */
+export function inputSchemaIsBlind(schema: JsonSchema | undefined): boolean {
+  if (schema === undefined) return true;
+  const properties = schema.properties;
+  if (typeof properties !== "object" || properties === null || Array.isArray(properties)) return true;
+  return Object.keys(properties).length === 0 && schema.additionalProperties === true;
+}
+
+/** The two sentences the tool-shape guarantee prints for a slot nothing could
+ *  read. ONE wording, three prompt surfaces (the apps shape brief, the
+ *  automation planner, the screen agent's tool brief): a blind slot must never
+ *  print as `{}`, which reads as "takes no arguments" / "returns nothing". */
+export const UNKNOWN_INPUT_SCHEMA_NOTE =
+  "arguments unknown — nothing could read this tool's input schema; it is NOT a no-argument tool";
+
+export const UNKNOWN_OUTPUT_SHAPE_NOTE =
+  "result shape unknown — pass the whole output through; do not bind to guessed field names";
+
+/** 01-core §4 */
+export interface ToolCall {
+  id: string;
+  tool: string;
+  args: Json;
+}
+
+/** 01-core §4 */
+export const toolCallSchema = z.object({
+  id: z.string(),
+  tool: z.string(),
+  args: requiredJsonValueSchema,
+}).passthrough() satisfies z.ZodType<ToolCall>;
+
+/** Additive composition hook: resolve a call's effective risk before policy
+ * rules, grants, breakers, and approvals evaluate it. Throwing, returning an
+ * unknown value, or returning undefined preserves the descriptor's risk.
+ *
+ * In core rather than in the guard because the guard is not its only reader:
+ * the automations engine grades a DECLARED call at arm time with the same
+ * resolver, so the consent card shows the grade the call will really run under
+ * and the grant it mints carries the descriptor hash the guard will compute. */
+export type RiskResolver = (
+  call: ToolCall,
+  descriptor: ToolDescriptor,
+  ctx: RunContext,
+) => RiskLabel | undefined | Promise<RiskLabel | undefined>;
+
+/** The descriptor a {@link RiskResolver}'s answer produces. Unchanged when the
+ *  resolver declined or agreed, so `descriptorHash` stays stable for every tool
+ *  whose grade is authored — and identical on both sides for the one whose
+ *  grade is not, which is what keeps a minted grant matchable. */
+export function withResolvedRisk(descriptor: ToolDescriptor, resolved: unknown): ToolDescriptor {
+  const parsed = riskLabelSchema.safeParse(resolved);
+  if (!parsed.success) return descriptor;
+  return parsed.data === descriptor.risk ? descriptor : { ...descriptor, risk: parsed.data };
+}
+
+/** 01-core §4 — a connector call that needs a per-user connected account first
+ * (04-actions §3). `connector`/`toolkit` key the umbrella's /connections
+ * endpoints; the UI renders an inline connect card and retries after connecting. */
+export interface ConnectRequired {
+  connector: string;
+  toolkit: string;
+  message: string;
+}
+
+/** 01-core §4 */
+const connectRequiredSchema = z.object({
+  connector: z.string().min(1),
+  toolkit: z.string().min(1),
+  message: z.string(),
+}).passthrough() satisfies z.ZodType<ConnectRequired>;
+
+/** 01-core §4 — the parked ask in words, for the surfaces that render no card:
+ *  an outside agent over MCP, a text message, a transcript. `question` is what
+ *  the person is being asked; `notes` are the quiet lines under it — the same
+ *  pair the in-thread card composes (`consentAsk`, ui/chrome/build-beat.tsx),
+ *  never a second vocabulary for one ask. */
+export interface PendingApproval {
+  id: ApprovalId;
+  question: string;
+  notes: string[];
+}
+
+/** 01-core §4 */
+const pendingApprovalSchema = z.object({
+  id: approvalIdSchema,
+  question: z.string().min(1),
+  notes: z.array(z.string()),
+}).passthrough() satisfies z.ZodType<PendingApproval>;
+
+/** 01-core §4
+ *
+ *  `blocked.cause` narrows WHY nothing ran when the reason is nobody's doing:
+ *  `"expired"` marks an approval wait that elapsed unanswered, so a surface can
+ *  say "expired unanswered" instead of misattributing the refusal (H2-G — the
+ *  timeout used to narrate as the person's no). A FIELD, not a new status: the
+ *  union is a closed discriminator to every already-published validator, while
+ *  an optional field passes through them (an old chrome renders the refusal
+ *  attributed to the rules — imprecise, never an accusation). Vocabulary
+ *  matches `ParkedCallOutcome.state: "expired"`. */
+export type ToolOutcome =
+  | { status: "ok"; output: Json }
+  | { status: "error"; error: { code: string; message: string } }
+  // `approval`/`say`/`descriptor` are FIELDS on the existing status, never a
+  // status of their own — the same trade `blocked.cause` makes above. A tool
+  // that parks an ask of its OWN (the built-app door: the ask is about a build,
+  // not about calling that tool) is the one that knows what the card says and
+  // what to tell the person meanwhile; a park the guard raised on the tool's own
+  // descriptor is already described by it, so all three stay optional and every
+  // shipped producer and reader is untouched.
+  //
+  // `descriptor` is the ask's own — what the CARD reads. `approval` is the same
+  // ask already in words, for the surfaces that render no card, and both are
+  // authored off the one descriptor (build-door.ts), so a card and an outside
+  // agent can never be told different things about one ask.
+  | {
+      status: "pending-approval";
+      approvalId: ApprovalId;
+      approval?: PendingApproval;
+      say?: string;
+      descriptor?: ToolDescriptor;
+    }
+  | { status: "blocked"; reason: string; cause?: "expired" }
+  | { status: "connect-required"; connect: ConnectRequired };
+
+/** 01-core §4 */
+export const toolOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ok"), output: requiredJsonValueSchema }).passthrough(),
+  z.object({
+    status: z.literal("error"),
+    error: z.object({ code: z.string(), message: z.string() }).passthrough(),
+  }).passthrough(),
+  z.object({
+    status: z.literal("pending-approval"),
+    approvalId: approvalIdSchema,
+    approval: pendingApprovalSchema.optional(),
+    say: z.string().min(1).optional(),
+    descriptor: toolDescriptorSchema.optional(),
+  }).passthrough(),
+  z.object({
+    status: z.literal("blocked"),
+    reason: z.string(),
+    cause: z.literal("expired").optional(),
+  }).passthrough(),
+  z.object({ status: z.literal("connect-required"), connect: connectRequiredSchema }).passthrough(),
+]) satisfies z.ZodType<ToolOutcome>;
+
+/** The run a listing is asked FOR (01-core §4) — a `RunContext` is one.
+ *
+ *  `venue`/`presence` are what design §12's projection reads: the guard
+ *  withholds destructive and external tools from an unattended run.
+ *  `grantedServiceSlugs` is the one thing that can put a withheld tool BACK on an
+ *  unattended listing — the connector dispatcher, for a firing that holds a live
+ *  per-slug grant — and it widens nothing else. Nothing else narrows a listing:
+ *  every tool a run may call is on every listing that run is given, so a listing
+ *  never has to be identified. */
+export type ToolListingContext = Pick<RunContext, "venue" | "presence" | "grantedServiceSlugs">;
+
+/** 01-core §4 */
+export interface ToolRegistry {
+  /** The tools available. Passing a run's context asks for the set that may be
+   *  PROJECTED into that run — see {@link ToolListingContext}.
+   *
+   *  Optional so every existing registry stays a valid implementation: a
+   *  zero-parameter `descriptors()` is assignable here and simply ignores the
+   *  hint, which means only the guard-bound registry has to know the law. */
+  descriptors(ctx?: ToolListingContext): Promise<ToolDescriptor[]>;
+  execute(call: ToolCall, ctx: RunContext): Promise<ToolOutcome>;
+}

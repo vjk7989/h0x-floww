@@ -1,0 +1,204 @@
+[
+  {
+    "id": "todays-schedule",
+    "lane": "screen",
+    "prompt": "Show me today's schedule, and let me check patients in as they arrive and mark the ones who never showed up.",
+    "pass": [
+      "lists every appointment the schedule tool returned, in time order",
+      "each row shows the patient, the time, the provider and the appointment's status",
+      "offers a check-in control on the three appointments still scheduled, and on no closed one",
+      "pressing check-in calls the check-in tool with that row's own appointment",
+      "marking a no-show asks for confirmation before it goes through"
+    ],
+    "tags": ["action"],
+    "shape": "table"
+  },
+  {
+    "id": "day-by-provider",
+    "lane": "screen",
+    "prompt": "Lay today out provider by provider so I can see where the gaps are — people keep calling asking for something this afternoon.",
+    "pass": [
+      "gives each of the four providers their own column or lane",
+      "puts every booked appointment in its provider's lane at its own time",
+      "shows the open slots the tool returned as open time, in the right provider's lane",
+      "invents no appointment and no opening the tools did not return"
+    ],
+    "tags": ["display"],
+    "shape": "calendar"
+  },
+  {
+    "id": "patient-record",
+    "lane": "screen",
+    "prompt": "Pull up Ruth Ozawa — I need her age, her contact email, her insurance, what she owes and what she's in for today, all on one screen.",
+    "pass": [
+      "shows Ruth Ozawa's age, email and insurer exactly as the patient record has them",
+      "shows her outstanding balance as money, matching the record",
+      "shows today's appointment for her: the time, the provider and the visit type",
+      "shows no other patient's details on the screen"
+    ],
+    "tags": ["display"],
+    "shape": "detail"
+  },
+  {
+    "id": "book-visit",
+    "lane": "screen",
+    "prompt": "Give me a booking form: pick the patient, pick the provider, pick one of today's open slots, say what the visit is for, then book it.",
+    "pass": [
+      "offers one field for each of the four things the booking tool takes",
+      "the patient and provider choices are people the tools returned, not invented ones",
+      "the slot choices are the open slots the tool returned, shown as times",
+      "submitting calls the booking tool with all four values filled in"
+    ],
+    "tags": ["action"],
+    "shape": "form"
+  },
+  {
+    "id": "front-desk-now",
+    "lane": "screen",
+    "prompt": "Give me a front-desk overview of right now: who is in the building — waiting or already in a room — who is still coming, what we have lost to no-shows and cancellations, and which rooms are free.",
+    "pass": [
+      "shows how many of today's appointments have arrived — checked in or already in a room",
+      "shows how many are still to come, and counts no-shows and cancellations separately",
+      "shows every room the tool returned with its status, so a person can see which are free",
+      "every count on the screen matches the rows the tools returned"
+    ],
+    "tags": ["display"],
+    "shape": "dashboard"
+  },
+  {
+    "id": "no-show-trend",
+    "lane": "screen",
+    "prompt": "Chart our no-shows over the last six weeks — I want to know whether it is getting worse.",
+    "pass": [
+      "draws a chart of the six weeks rather than only listing them",
+      "every week's no-show count matches the tool's number",
+      "labels each week so a person can tell which one it is",
+      "the week of Jul 27 reads as the worst week for no-shows"
+    ],
+    "tags": ["display"],
+    "shape": "chart"
+  },
+  {
+    "id": "fill-cancellation",
+    "lane": "screen",
+    "prompt": "Dr. Raman's 2:10 just cancelled. Who on the waitlist could actually take it, and let me offer it to one of them.",
+    "pass": [
+      "names the 2:10 PM opening with Dr. Raman as the slot being filled",
+      "lists exactly the two waitlist patients who could take it — Gio Ferraro and Sana Alvi — and nobody else",
+      "shows how long each of those patients has been waiting",
+      "offering the slot calls the waitlist tool with that patient's waitlist entry and that slot"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "lobby-board",
+    "lane": "screen",
+    "prompt": "We need a waiting-room screen for the lobby TV. Show who is in the building right now — waiting or already in a room — without exposing anybody: first name and last initial only, and nothing about why they are here.",
+    "pass": [
+      "shows only the patients who have arrived — the four who are checked in or in a room",
+      "every name is a first name and a last initial only, never a full last name",
+      "nothing on the screen says why anyone is here: no visit type, no reason, no insurer",
+      "each person reads as waiting or in a room, matching the tool's rows"
+    ],
+    "tags": ["display"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "confirm-sweep",
+    "lane": "screen",
+    "prompt": "Some of today's patients still have not confirmed. Build me a screen that texts all of them in one go, with a confirmation step before anything sends.",
+    "pass": [
+      "lists the appointments still to come that the patient has not confirmed, and no others",
+      "offers one control that texts all of them at once",
+      "that control says how many people it will text, and pressing it asks for confirmation before anything sends",
+      "the confirmation names the three patients it is about to text — Amara Osei, Owen Bragg and Sam Iyer"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "empty-waitlist",
+    "lane": "screen",
+    "prompt": "Show me the waitlist — who is still waiting on a sooner appointment?",
+    "pass": [
+      "says nobody is on the waitlist rather than showing an empty table",
+      "invents no waiting patients",
+      "offers no control that would act on a patient who is not there"
+    ],
+    "tags": ["display"],
+    "shape": "empty-state",
+    "data": { "list_waitlist": { "data": [] } }
+  },
+  {
+    "id": "book-like-a-patient",
+    "lane": "screen",
+    "prompt": "Book Ruth in the way a patient would — treatment, then provider, then a time, one step at a time.",
+    "pass": [
+      "shows only the first step when it loads — what the visit is for — with the provider step and the time step named as what comes next, never all three at once",
+      "the first step's choices are visit types, not providers and not slot times",
+      "names Ruth Ozawa as the patient being booked, so no step has to ask who it is for",
+      "nothing on the first step books anything — no press before the last step calls the booking tool"
+    ],
+    "tags": ["display"],
+    "shape": "wizard",
+    "source": "Jane — Online booking (patient-facing), https://jane.app/features/online-booking"
+  },
+  {
+    "id": "provider-availability",
+    "lane": "screen",
+    "prompt": "Dr. Lindqvist wants to stop taking new patients for a while and shorten his default slot length — give me one place to change that without digging through everything else.",
+    "pass": [
+      "shows Dr. Sven Lindqvist's own settings, not every provider's",
+      "offers a control for whether he takes new patients, reading as accepting when the screen loads",
+      "offers a control for his default visit length, starting at the tool's 30 minutes",
+      "the settings tool fires with Lindqvist and the values on screen, never another provider's — as each control is changed or on a save control after them, and the screen says which"
+    ],
+    "tags": ["action"],
+    "shape": "settings",
+    "source": "SimplePractice — Managing your availability, https://support.simplepractice.com/hc/en-us/articles/208483776-Managing-your-availability"
+  },
+  {
+    "id": "visit-history",
+    "lane": "screen",
+    "prompt": "Before Ruth's visit, walk me through her history here — every time she's been in, and whether she actually showed.",
+    "pass": [
+      "strings Ruth Ozawa's five visits along a timeline in date order, rather than only listing them",
+      "each visit shows its date, its provider and what it was for",
+      "the skin check with Dr. Lindqvist reads as a no-show and the other four as completed",
+      "shows no visit the tool did not return, and nobody else's visits"
+    ],
+    "tags": ["display"],
+    "shape": "timeline",
+    "source": "Jane — a patient's past and upcoming appointments, https://jane.app/guide/how-to-view-and-print-appointments-for-a-patient-past-or-upcoming-appointments"
+  },
+  {
+    "id": "patient-messages",
+    "lane": "screen",
+    "prompt": "Pull up whatever patients have messaged us today so I can see who still needs an answer and reply without leaving this screen.",
+    "pass": [
+      "puts the threads in a list down one side and the open conversation beside it, on one screen",
+      "lists all five threads, each with its patient's name and the last message",
+      "marks exactly the three unread threads as still needing an answer",
+      "each row's own control opens that thread beside the list without calling a tool",
+      "a reply box and its send control sit with the open thread, so answering a patient never leaves the screen"
+    ],
+    "tags": ["action"],
+    "shape": "split-inbox",
+    "source": "Jane — Secure Messaging, https://jane.app/features/secure-messaging"
+  },
+  {
+    "id": "waitlist-filter",
+    "lane": "screen",
+    "prompt": "One of the providers just opened up — let me filter the waitlist by who they wanted to see and how urgent it is, instead of scrolling the whole list.",
+    "pass": [
+      "offers a control that filters the waitlist by provider, offering exactly the three providers the waitlist rows name and not the fourth nobody is waiting for",
+      "offers a control that filters by urgency — routine, soon and urgent",
+      "shows all five waiting patients before any filter is set",
+      "every row still shows who the patient is waiting for and how long they have waited"
+    ],
+    "tags": ["display"],
+    "shape": "filter-builder",
+    "source": "Jane — Using the Wait List, https://jane.app/guide/using-the-wait-list"
+  }
+]

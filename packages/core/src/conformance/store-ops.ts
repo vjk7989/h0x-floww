@@ -1,0 +1,2245 @@
+import type { AuditEvent } from "../audit.js";
+import { ENGINE_ALLOWLIST_VERSION, engineAppHistory } from "../engine-collections.js";
+import type { VendoErrorCode } from "../errors.js";
+import { isoDateTimeSchema, type IsoDateTime } from "../ids.js";
+import { STORE_WIRE_APPEND_MESSAGES_OPS, STORE_WIRE_PATHS, STORE_WIRE_TURN_OPS, VENDO_STORE_WIRE_FORMAT } from "../store-wire.js";
+import { tenantConnectorSecret, type AuditQuery, type CollectionFootprint, type StoreOps, type UsageCountQuery } from "../store.js";
+import { assert, assertBytesEqual, assertDeepEqual } from "./assertions.js";
+import { omitted, type ConformanceCase, type ConformanceOmission, type ConformanceSuite } from "./index.js";
+
+/** Refusals are checked by VendoError CODE, not by message text: "threw" is not
+    "refused for the right reason". Duck-typed rather than `instanceof`, because
+    a remote backend rebuilds the error from the wire envelope. */
+const assertThrowsCode = async (
+  body: () => Promise<unknown>,
+  code: VendoErrorCode,
+  message: string,
+): Promise<void> => {
+  try {
+    await body();
+  } catch (error) {
+    const actual = (error as { code?: unknown }).code;
+    assert(actual === code, `${message} should throw ${code}, got ${String(actual)}: ${String(error)}`);
+    return;
+  }
+  throw new Error(`${message} did not throw`);
+};
+
+/** The page size every pagination case walks with. */
+const PAGE = 2;
+
+/** Walks a list op page by page and proves the walk is lossless: no page
+    exceeds the requested limit, nothing repeats, no cursor repeats, and the
+    union is exactly the seeded set. */
+const assertPaginates = async (
+  label: string,
+  expected: string[],
+  fetchPage: (cursor?: string) => Promise<{ ids: string[]; cursor?: string }>,
+): Promise<void> => {
+  const seen: string[] = [];
+  const cursors = new Set<string>();
+  let cursor: string | undefined;
+  for (let page = 0; page < expected.length + 1; page += 1) {
+    const next = await fetchPage(cursor);
+    assert(next.ids.length <= PAGE, `${label}: page exceeded its requested limit`);
+    for (const id of next.ids) {
+      assert(!seen.includes(id), `${label}: ${id} appeared on more than one page`);
+      seen.push(id);
+    }
+    if (next.cursor === undefined) break;
+    assert(!cursors.has(next.cursor), `${label}: pagination cursor repeated before completion`);
+    cursors.add(next.cursor);
+    cursor = next.cursor;
+  }
+  assertDeepEqual([...seen].sort(), [...expected].sort(), `${label}: pagination omitted or added entries`);
+};
+
+/** Reads one string field off an opaque list entry. `workspace.index` and
+    `workspace.history` type their entries as `unknown`, but a caller has no
+    other way to learn a path or a commit id, so the field is contract, not
+    shape guessing. */
+const stringField = (entry: unknown, field: string, message: string): string => {
+  const value = (entry as Record<string, unknown> | null)?.[field];
+  assert(typeof value === "string", `${message}: entry ${JSON.stringify(entry)} has no string "${field}"`);
+  return value;
+};
+
+/** The numeric twin of {@link stringField} — `workspace.index` entries carry
+    the revision a strict commit compare-and-swaps against, so the field is
+    contract the same way `commitId` is. */
+const numberField = (entry: unknown, field: string, message: string): number => {
+  const value = (entry as Record<string, unknown> | null)?.[field];
+  assert(typeof value === "number", `${message}: entry ${JSON.stringify(entry)} has no number "${field}"`);
+  return value;
+};
+
+/** A shape-valid AuditEvent. `vendo_audit` is a TYPED door — the real backend
+    parses every row with `auditEventSchema` and refuses what does not fit — so
+    the audit cases seed real events rather than convenient stubs. `minute` is
+    the event's own `at`, which is the column both doors over this drawer order
+    on. */
+const auditEvent = (id: string, minute: number, fields: Partial<AuditEvent>): AuditEvent => ({
+  id,
+  at: new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString() as IsoDateTime,
+  kind: "tool-call",
+  principal: { kind: "user", subject: "user_1" },
+  venue: "chat",
+  presence: "present",
+  ...fields,
+});
+
+/** Seeds the audit drawer through the engine door, in ascending `at` order —
+    which is what makes "newest first" one list rather than two. */
+const seedAudit = async (ops: StoreOps, events: AuditEvent[]): Promise<void> => {
+  for (const event of events) await ops.engine.put("vendo_audit", { id: event.id, data: event });
+};
+
+// ---------------------------------------------------------------------------
+// racing
+//
+// Everything else in this file is a SEQUENCE, and a sequence cannot see the
+// window a concurrent caller lands in: a read-then-write with no atomicity
+// underneath passes every sequential case ever written and loses one of two
+// simultaneous writers in production. These helpers are how a case fires two
+// callers at ONE instant and then asserts what has to be true of BOTH orders —
+// never which one won, because either winning is correct and pinning one would
+// fail an honest implementation on scheduling alone.
+// ---------------------------------------------------------------------------
+
+/** Fires one call `count` times at once and hands back how each settled. */
+const race = async <T>(
+  count: number,
+  call: (attempt: number) => Promise<T>,
+): Promise<Array<PromiseSettledResult<T>>> =>
+  await Promise.allSettled(Array.from({ length: count }, (_, attempt) => call(attempt)));
+
+/** The VendoError code a settled call was refused with, or undefined when it
+    resolved. A raced loser is refused for a NAMED reason or not at all: a
+    TypeError or a driver's own deadlock message escaping as the answer is a
+    different bug wearing the right shape. */
+const refusalCode = (settled: PromiseSettledResult<unknown>): unknown =>
+  settled.status === "rejected" ? (settled.reason as { code?: unknown } | null)?.code : undefined;
+
+/** The values of the calls that resolved. */
+const won = <T>(settled: Array<PromiseSettledResult<T>>): T[] =>
+  settled.flatMap((one) => (one.status === "fulfilled" ? [one.value] : []));
+
+/** Why a case over an OPTIONAL member answered `omitted` instead of running.
+    `transcripts.appendMessages` is optional by the same rule `RecordStore.claim`
+    is (store.ts): an implementation that cannot serve it says so by leaving it
+    off. What it may NOT do is leave it off invisibly, which is what these cases
+    used to allow — an early `return` made "absent" and "correct" one green
+    line, so a mount could drop the whole batch-append family and every case
+    over it still passed. */
+const APPEND_ABSENT =
+  "this mount omits transcripts.appendMessages (optional — callers fall back to getThread + putMessage)";
+
+/** {@link APPEND_ABSENT}'s twin for the other optional family. */
+const RETENTION_ABSENT = "this mount omits the retention family (optional — an engine with nowhere to quarantine to leaves it off)";
+
+/** ...and for the meter, optional on the same rule. */
+const USAGE_ABSENT = "this mount omits the usage family (optional — a store with nowhere to meter leaves it off, and a limits policy is refused at composition rather than enforced against a meter that reads zero)";
+
+/** ...and for the turn envelopes, optional on the same rule. */
+const TURN_ABSENT = "this mount omits the turn family (optional — a caller that finds it absent makes the individual calls it always did)";
+
+/** Seeds an app record with the shape the typed `vendo_apps` door accepts, for
+    the cases whose subject is an app rather than a subject. */
+const seedApp = async (ops: StoreOps, appId: string): Promise<void> => {
+  await ops.engine.put("vendo_apps", {
+    id: appId,
+    data: {
+      subject: "user_1",
+      enabled: true,
+      doc: { format: "vendo/app@1", id: appId, name: appId },
+    },
+    refs: { subject: "user_1" },
+  });
+};
+
+// ---------------------------------------------------------------------------
+// suite
+// ---------------------------------------------------------------------------
+
+export interface StoreOpsConformanceOptions {
+  makeOps(): Promise<{ ops: StoreOps; close?(): Promise<void> }>;
+  /**
+   * A SECOND handle on the same physical store, bound to a different tenant.
+   *
+   * Supply it and the kit proves the one thing a single handle cannot: that a
+   * mount serving many tenants out of one database keeps them apart. Leave it
+   * off — as a single-tenant store must, having no second tenant to hand out —
+   * and those cases report as OMITTED rather than passing, so "this store has
+   * no tenants" and "this store's tenants are isolated" never read alike.
+   *
+   * The two handles must share their backing store. Two independent stores
+   * are trivially isolated and prove nothing, which is why this is a separate
+   * option and not a second `makeOps()` call.
+   */
+  makeNeighbour?(ops: StoreOps): Promise<{ ops: StoreOps; close?(): Promise<void> }>;
+}
+
+const opsCase = (
+  opts: StoreOpsConformanceOptions,
+  name: string,
+  body: (ops: StoreOps) => Promise<void | ConformanceOmission>,
+): ConformanceCase => ({
+  name,
+  async run() {
+    const made = await opts.makeOps();
+    try {
+      return await body(made.ops);
+    } finally {
+      await made.close?.();
+    }
+  },
+});
+
+export function storeOpsConformance(opts: StoreOpsConformanceOptions): ConformanceSuite {
+  return {
+    seam: "StoreOps",
+    cases: [
+      // =====================================================================
+      // engine
+      // =====================================================================
+
+      /** Store wire v1: every list op defaults to 100 per page and caps at
+          1000. Pinned on `engine.list` — the generic records family that used
+          to carry this case is gone, and the rule is the WIRE's, not the
+          StoreAdapter's, so it stays in this suite. */
+      opsCase(opts, "engine.list defaults to 100 per page and refuses or clamps a limit above 1000", async (ops) => {
+        const collection = engineAppHistory("conf_cap");
+        const ids = Array.from({ length: 101 }, (_, i) => `cap_${String(i).padStart(3, "0")}`);
+        for (const id of ids) await ops.engine.put(collection, { id, data: { id } });
+        const defaulted = await ops.engine.list(collection);
+        assert(defaulted.records.length === 100, `the default page should hold 100 records, got ${defaulted.records.length}`);
+        assert(defaulted.cursor !== undefined, "a truncated default page must return a cursor");
+        const overMax = await ops.engine.list(collection, { limit: 5000 }).catch((error: unknown) => {
+          assert((error as { code?: unknown }).code === "validation", `a limit above the 1000 max must be refused as validation, got ${String(error)}`);
+          return null;
+        });
+        if (overMax !== null) assert(overMax.records.length <= 1000, "an accepted over-max limit was not clamped to 1000");
+      }),
+
+      /** Store wire v1: a cursor is only followable if an identical query comes
+          back in an identical order. Same reason as the case above for living
+          on `engine.list`. */
+      opsCase(opts, "engine.list repeats an identical query in the same order", async (ops) => {
+        const collection = engineAppHistory("conf_det");
+        for (const id of ["da", "db", "dc", "dd"]) await ops.engine.put(collection, { id, data: { id } });
+        const first = await ops.engine.list(collection);
+        const repeat = await ops.engine.list(collection);
+        assertDeepEqual(repeat.records.map((r) => r.id), first.records.map((r) => r.id), "identical list calls returned different orders");
+        const firstPage = await ops.engine.list(collection, { limit: PAGE });
+        const repeatPage = await ops.engine.list(collection, { limit: PAGE });
+        assertDeepEqual(repeatPage.records.map((r) => r.id), firstPage.records.map((r) => r.id), "identical first pages returned different records");
+        assert(repeatPage.cursor === firstPage.cursor, "identical first pages returned different cursors");
+      }),
+
+      /** Store wire v1: keyset pagination over `engine.list` walks the whole
+          set exactly once. */
+      opsCase(opts, "engine.list limit and cursor paginate without loss or duplicates", async (ops) => {
+        const collection = engineAppHistory("conf_pg");
+        const expected = ["pa", "pb", "pc", "pd", "pe"];
+        for (const id of expected) await ops.engine.put(collection, { id, data: { id } });
+        await assertPaginates("engine.list", expected, async (cursor) => {
+          const page = await ops.engine.list(collection, { limit: PAGE, cursor });
+          return { ids: page.records.map((r) => r.id), cursor: page.cursor };
+        });
+      }),
+
+      /** The ref filter, which is how every caller that is not walking a whole
+          drawer finds its rows: exact key/value CONTAINMENT, ANDed, and blind
+          to refs the row carries beyond the ones asked for. A filter that
+          matched on the key alone, or that required the row's refs to equal the
+          query, reads as "no results" at one call site and "everybody's rows"
+          at another — and neither says which. */
+      opsCase(opts, "engine.list narrows by refs, exactly and ANDed", async (ops) => {
+        const collection = engineAppHistory("conf_refs");
+        await ops.engine.put(collection, { id: "both", data: {}, refs: { subject: "u1", kind: "invoice" } });
+        await ops.engine.put(collection, { id: "other_value", data: {}, refs: { subject: "u2", kind: "invoice" } });
+        await ops.engine.put(collection, { id: "one_key", data: {}, refs: { subject: "u1" } });
+        // A row carrying MORE refs than the filter names still matches: this is
+        // containment, not equality.
+        await ops.engine.put(collection, { id: "extra", data: {}, refs: { subject: "u1", kind: "invoice", box: "in" } });
+
+        const idsOf = async (refs: Record<string, string>): Promise<string[]> =>
+          (await ops.engine.list(collection, { refs })).records.map((record) => record.id).sort();
+        assertDeepEqual(await idsOf({ subject: "u1" }), ["both", "extra", "one_key"], "a one-key ref filter returned the wrong rows");
+        assertDeepEqual(await idsOf({ subject: "u1", kind: "invoice" }), ["both", "extra"], "two ref keys did not AND");
+        assertDeepEqual(await idsOf({ subject: "nobody" }), [], "a ref value nothing carries matched rows anyway");
+      }),
+
+      /** The forward walk — the one read a newest-first page cannot serve. A
+          meter that has already counted runs up to some instant asks for
+          everything after it and advances its mark as it goes, so a bound that
+          loses precision on the round trip moves BACKWARDS and the meter
+          re-counts a window it has already billed; one that moves too far skips
+          rows nobody ever counts. Both are silent, which is why the walk is
+          asserted lossless rather than merely non-empty.
+          Nothing here reads the watermark STRING: it is contractually opaque,
+          and the two shipped engines spell it differently (a Postgres-native
+          text form, an ISO instant). */
+      opsCase(opts, "engine.list walks forward from a watermark, oldest first, visiting every row exactly once", async (ops) => {
+        // vendo_runs is a typed door — automationId, trigger, status, record and
+        // startedAt, or the real backend refuses the row. `startedAt` ascends
+        // with write order, so "oldest first" is one answer for an engine that
+        // orders on the indexed column and one that orders on arrival.
+        const ids = ["run_w1", "run_w2", "run_w3", "run_w4", "run_w5"];
+        for (const [index, id] of ids.entries()) {
+          await ops.engine.put("vendo_runs", {
+            id,
+            data: {
+              automationId: "atm_meter",
+              trigger: { kind: "schedule" },
+              status: "ok",
+              record: { index },
+              startedAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+            },
+          });
+        }
+
+        let after = new Date(0).toISOString(); // the mark a meter that has counted nothing holds
+        const seen: string[] = [];
+        for (let page = 0; page < ids.length + 2; page += 1) {
+          const answer = await ops.engine.list("vendo_runs", { limit: PAGE, watermark: { field: "started_at", after } });
+          const echoed = answer.watermark;
+          assert(answer.records.length <= PAGE, `a watermark page held ${answer.records.length} rows past its limit of ${PAGE}`);
+          // The echo is the ONLY thing that tells a caller its bound was
+          // understood: a mount older than the bound parses the query, ignores
+          // it, and answers with an ordinary newest-first page instead.
+          assert(echoed !== undefined, "a page that was given a watermark bound must echo the next bound back");
+          for (const record of answer.records) {
+            assert(!seen.includes(record.id), `${record.id} was visited twice by the forward walk`);
+            seen.push(record.id);
+          }
+          if (answer.records.length === 0) {
+            assert(echoed === after, "an empty page must echo the requested bound back unchanged");
+            break;
+          }
+          after = echoed;
+        }
+        assertDeepEqual(seen, ids, "the forward walk did not visit every row exactly once, oldest first");
+      }),
+
+      /** The tie the walk has to survive. `vendo_runs.started_at` is
+          CALLER-SUPPLIED, and callers write `new Date().toISOString()` — one
+          millisecond of resolution — so a burst of runs routinely shares one
+          value. A bound that is nothing but that value cannot say where INSIDE
+          such a group a page stopped: the next call asks for everything
+          strictly after the instant, and whatever was left of the group is
+          skipped, silently and permanently. For the meter this walk exists for
+          that is usage nobody ever bills. The group is seeded larger than the
+          page deliberately, so a page boundary MUST land inside it. */
+      opsCase(opts, "engine.list's forward walk crosses a page boundary inside rows sharing one indexed value", async (ops) => {
+        const tied = "2026-03-04T05:06:07.000Z"; // one millisecond, five runs
+        const ids = ["run_t1", "run_t2", "run_t3", "run_t4", "run_t5"];
+        for (const id of ids) {
+          await ops.engine.put("vendo_runs", {
+            id,
+            data: { automationId: "atm_meter", trigger: { kind: "schedule" }, status: "ok", record: {}, startedAt: tied },
+          });
+        }
+        // A meter's FIRST bound is a plain field value it authored; every later
+        // one is the page's own echo, sent back verbatim and never read.
+        await assertPaginates("engine.list watermark", ids, async (after) => {
+          const page = await ops.engine.list("vendo_runs", {
+            limit: PAGE,
+            watermark: { field: "started_at", after: after ?? new Date(0).toISOString() },
+          });
+          assert(page.watermark !== undefined, "a page that was given a watermark bound must echo the next bound back");
+          // The echo never falls away — its absence means the mount ignored the
+          // bound — so it is the empty page, not a missing echo, that ends the
+          // walk.
+          return {
+            ids: page.records.map((record) => record.id),
+            ...(page.records.length === 0 ? {} : { cursor: page.watermark }),
+          };
+        });
+      }),
+
+      /** Two refusals, both of them cliffs a caller would otherwise fall off
+          quietly: an unindexed bound is a full table scan wearing a filter's
+          clothes, and a cursor beside a watermark is two walks in opposite
+          directions with no single answer to give. Refused, rather than served
+          slowly or resolved by a precedence rule nobody could guess. */
+      opsCase(opts, "engine.list refuses a watermark on an unindexed field, and one sent beside a cursor", async (ops) => {
+        const after = new Date(0).toISOString();
+        await assertThrowsCode(
+          () => ops.engine.list("vendo_audit", { watermark: { field: "at", after } }),
+          "validation",
+          "a watermark on a field vendo_audit does not declare indexed",
+        );
+        await assertThrowsCode(
+          () => ops.engine.list("vendo_runs", { cursor: "0", watermark: { field: "started_at", after } }),
+          "validation",
+          "a call carrying both a cursor and a watermark",
+        );
+      }),
+
+      opsCase(opts, "engine round-trips a record on an engine collection", async (ops) => {
+        const put = await ops.engine.put("vendo_workspace_commits", { id: "wc_1", data: { v: 1 }, refs: { subject: "user_1" } });
+        isoDateTimeSchema.parse(put.createdAt);
+        isoDateTimeSchema.parse(put.updatedAt);
+        const got = await ops.engine.get("vendo_workspace_commits", "wc_1");
+        assertDeepEqual(got, put, "engine.get did not round-trip the stored record");
+        const listed = await ops.engine.list("vendo_workspace_commits", { ids: ["wc_1"] });
+        assertDeepEqual(listed.records.map((r) => r.id), ["wc_1"], "engine.list did not find the record it just stored");
+        await ops.engine.delete("vendo_workspace_commits", "wc_1");
+        assert(await ops.engine.get("vendo_workspace_commits", "wc_1") === null, "the deleted record remained readable");
+      }),
+
+      /** The deliveries dedupe the ingestion surface depends on
+          (packages/automations/src/ingestion-surface.ts): a redelivered webhook
+          must lose, and lose without touching what the first one recorded. */
+      opsCase(opts, "engine.insertIfAbsent returns record on first call, null on second", async (ops) => {
+        const first = await ops.engine.insertIfAbsent("automations:deliveries", { id: "dlv_1", data: { n: 1 } });
+        assert(first !== null, "engine.insertIfAbsent first call should return a record");
+        assert(first!.id === "dlv_1", "engine.insertIfAbsent did not echo id");
+        const second = await ops.engine.insertIfAbsent("automations:deliveries", { id: "dlv_1", data: { n: 2 } });
+        assert(second === null, "engine.insertIfAbsent second call should return null");
+        const got = await ops.engine.get("automations:deliveries", "dlv_1");
+        assertDeepEqual(got?.data, { n: 1 }, "engine.insertIfAbsent overwrote the recorded delivery");
+      }),
+
+      /** The same insert, RACED — which is the shape a redelivered webhook
+          actually arrives in. Sequentially, a `has()`-then-`set()` written in
+          application code passes the case above and still admits every one of
+          four simultaneous callers, because the check and the write are two
+          statements with a window between them. The winner is whichever one the
+          scheduler picked, so nothing here names it: what is asserted is that
+          there is exactly ONE, and that the row the drawer kept is the row that
+          winner was handed — a backend that returns one delivery and stores
+          another has told two callers two different truths. */
+      opsCase(opts, "engine.insertIfAbsent admits exactly one of four simultaneous writers", async (ops) => {
+        const settled = await race(4, (attempt) =>
+          ops.engine.insertIfAbsent("automations:deliveries", { id: "dlv_race", data: { attempt } }));
+        for (const one of settled) {
+          assert(one.status === "fulfilled", `a raced insert failed instead of losing: ${String(refusalCode(one))}`);
+        }
+        const admitted = won(settled).filter((record) => record !== null);
+        assert(admitted.length === 1, `exactly one of four simultaneous inserts may be admitted, ${admitted.length} were`);
+        const held = await ops.engine.get("automations:deliveries", "dlv_race");
+        assertDeepEqual(held?.data, admitted[0]!.data, "the drawer kept a delivery no admitted insert wrote");
+      }),
+
+      /** The schedule cursor claim: a runner holding a revision the schedule has
+          moved past may not write its stale cursor back over the live one. */
+      opsCase(opts, "engine.compareAndSwap succeeds on matching revision, null on stale", async (ops) => {
+        const created = await ops.engine.put("automations:schedule", { id: "sch_1", data: { cursor: 1 } });
+        assert(created.revision, "engine.put must return a revision for CAS");
+        const swapped = await ops.engine.compareAndSwap("automations:schedule", { id: "sch_1", data: { cursor: 2 } }, created.revision!);
+        assert(swapped !== null, "engine.compareAndSwap should succeed on matching revision");
+        assertDeepEqual(swapped!.data, { cursor: 2 }, "engine.compareAndSwap did not update data");
+        const stale = await ops.engine.compareAndSwap("automations:schedule", { id: "sch_1", data: { cursor: 3 } }, created.revision!);
+        assert(stale === null, "engine.compareAndSwap should return null on stale revision");
+      }),
+
+      /** The same swap, RACED — two runners that read the schedule at the same
+          instant and both try to advance it. Both hold a revision that WAS live
+          when they read it, so a backend that compares against what it read a
+          statement ago (rather than inside the write itself) lets both land and
+          the schedule skips a window. Exactly one may be told it swapped, and
+          the row must hold that one's cursor: a row holding the loser's value
+          means the loser's write landed after being told it had not. */
+      opsCase(opts, "engine.compareAndSwap lands exactly one of two swaps off one revision", async (ops) => {
+        const created = await ops.engine.put("automations:schedule", { id: "sch_race", data: { cursor: 0 } });
+        assert(created.revision !== undefined, "engine.put must return a revision for CAS");
+        const settled = await race(2, (attempt) =>
+          ops.engine.compareAndSwap("automations:schedule", { id: "sch_race", data: { cursor: attempt + 1 } }, created.revision!));
+        for (const one of settled) {
+          assert(one.status === "fulfilled", `a raced swap failed instead of losing: ${String(refusalCode(one))}`);
+        }
+        const landed = won(settled).filter((record) => record !== null);
+        assert(landed.length === 1, `exactly one swap off one revision may land, ${landed.length} did`);
+        const held = await ops.engine.get("automations:schedule", "sch_race");
+        assertDeepEqual(held?.data, landed[0]!.data, "the row holds a cursor the losing swap wrote");
+      }),
+
+      /** Sequential, not concurrent: two callers read the same slot and both try
+          to take it, and the loser must be told the row moved on rather than
+          stamping its own claim over the winner's. */
+      opsCase(opts, "engine.claim lets exactly one of two callers win", async (ops) => {
+        await ops.engine.put("vendo_placement_slots", { id: "slot_1", data: { holder: null }, refs: { o: "a" } });
+        const expected = { id: "slot_1", data: { holder: null }, refs: { o: "a" } };
+        const first = await ops.engine.claim("vendo_placement_slots", expected, { data: { holder: "run_1" }, refs: { o: "a" } });
+        assert(first === true, "the first claim on a matching row should win");
+        const second = await ops.engine.claim("vendo_placement_slots", expected, { data: { holder: "run_2" }, refs: { o: "a" } });
+        assert(second === false, "the second claim on the same stale expectation should lose");
+        const after = await ops.engine.get("vendo_placement_slots", "slot_1");
+        assertDeepEqual(after?.data, { holder: "run_1" }, "the winner's replacement did not land");
+      }),
+
+      /** `claim`'s OTHER form: no replacement is a compare-and-DELETE, and it is
+          how a holder releases a slot without a second caller's stale write
+          landing in the gap between a read and a delete. Untested until now,
+          which meant an implementation could serve the replace form perfectly
+          and treat the delete form as a no-op that answers `true` — a released
+          slot nobody can take again, with a success code on it. */
+      opsCase(opts, "engine.claim with no replacement deletes exactly the row it matched", async (ops) => {
+        const expected = { id: "slot_rel", data: { holder: "run_1" }, refs: { o: "a" } };
+        await ops.engine.put("vendo_placement_slots", expected);
+        await ops.engine.put("vendo_placement_slots", { id: "slot_other", data: { holder: "run_1" }, refs: { o: "a" } });
+
+        assert(await ops.engine.claim("vendo_placement_slots", expected) === true, "a compare-and-delete on a matching row should win");
+        assert(await ops.engine.get("vendo_placement_slots", "slot_rel") === null, "the claimed row was not deleted");
+        assert(await ops.engine.get("vendo_placement_slots", "slot_other") !== null, "the delete took a row it was not aimed at");
+        // The row is gone, so the same claim can no longer match — a `true` here
+        // is a delete that reports success without looking.
+        assert(await ops.engine.claim("vendo_placement_slots", expected) === false, "a compare-and-delete matched a row that no longer exists");
+      }),
+
+      /** The claim, RACED — the shape it exists for. Two runners read one free
+          slot at the same instant and both move to take it; the loser must be
+          told the row moved rather than stamping its own holder over the
+          winner's. Which one wins is the scheduler's business, so the assertion
+          is that exactly one is told it won AND that the holder the slot ended
+          up with is that same one — the failure this catches is a backend where
+          both writes land and the answer disagrees with the row. */
+      opsCase(opts, "engine.claim under a real race lets exactly one caller win", async (ops) => {
+        const expected = { id: "slot_race", data: { holder: null }, refs: { o: "a" } };
+        await ops.engine.put("vendo_placement_slots", expected);
+        const holders = ["run_a", "run_b"];
+        const settled = await race(holders.length, (attempt) =>
+          ops.engine.claim("vendo_placement_slots", expected, { data: { holder: holders[attempt] }, refs: { o: "a" } }));
+        for (const one of settled) {
+          assert(one.status === "fulfilled", `a raced claim failed instead of losing: ${String(refusalCode(one))}`);
+        }
+        const winners = settled.flatMap((one, attempt) =>
+          (one.status === "fulfilled" && one.value === true ? [holders[attempt]!] : []));
+        assert(winners.length === 1, `exactly one of two simultaneous claims may win, ${winners.length} did`);
+        const after = await ops.engine.get("vendo_placement_slots", "slot_race");
+        assertDeepEqual(after?.data, { holder: winners[0] }, "the slot is held by a caller that was told it lost");
+      }),
+
+      opsCase(opts, "engine refuses a collection outside the allowlist on every verb", async (ops) => {
+        await assertThrowsCode(
+          () => ops.engine.put("host_invoices", { id: "inv_1", data: { total: 1 } }),
+          "blocked",
+          "a non-engine collection on engine.put",
+        );
+        // A read verb too: the gate is on every verb, not just the writes.
+        await assertThrowsCode(
+          () => ops.engine.get("host_invoices", "inv_1"),
+          "blocked",
+          "a non-engine collection on engine.get",
+        );
+
+        // "blocked" with no explanation reads as a bug in Vendo, so the refusal
+        // must name the allowlist version it judged against and the door the
+        // caller actually wanted.
+        const refusal = await ops.engine.get("host_invoices", "inv_1").then(() => null, (error: unknown) => error);
+        const message = String((refusal as { message?: unknown } | null)?.message ?? refusal);
+        assert(message.includes(`v${ENGINE_ALLOWLIST_VERSION}`), `the refusal should name the allowlist version, got ${message}`);
+        assert(message.includes("vendo_apps_sql"), `the refusal should point at the app's own database, got ${message}`);
+
+        // An app-scoped name too — outside the allowlist exactly like
+        // `host_invoices`, and the shape a generated app is most likely to
+        // reach for when it wants a drawer of its own.
+        await assertThrowsCode(
+          () => ops.engine.put("app:app_gate:invoices", { id: "inv_1", data: { total: 1 } }),
+          "blocked",
+          "an app-scoped collection on engine.put",
+        );
+      }),
+
+      /** `engine` is a NEW door onto the same routed doors the local backend
+          already had, so it inherits their per-collection law. A door that
+          quietly bypassed it would make the audit log deletable and the effect
+          ledger re-writable — the two things neither is allowed to be. */
+      opsCase(opts, "engine does not bypass the routed doors' append-only and insert-once policy", async (ops) => {
+        // Shape-valid rows: both collections are TYPED doors in the real
+        // backend, which refuses malformed data as `validation` long before
+        // policy is reached.
+        const audit = {
+          id: "aud_engine_policy",
+          at: new Date().toISOString(),
+          kind: "tool-call",
+          principal: { kind: "user", subject: "user_1" },
+          venue: "chat",
+          presence: "present",
+        };
+        await ops.engine.put("vendo_audit", { id: audit.id, data: audit });
+        await assertThrowsCode(
+          () => ops.engine.delete("vendo_audit", audit.id),
+          "blocked",
+          "deleting an audit event through the engine door",
+        );
+        assert(await ops.engine.get("vendo_audit", audit.id) !== null, "the refused delete erased the audit event anyway");
+
+        const first = await ops.engine.put("vendo_effects", { id: "eff_engine_policy", data: { subject: "user_1", outcome: { sent: 1 } } });
+        assertDeepEqual((first.data as Record<string, unknown>)["outcome"], { sent: 1 }, "the first receipt did not record its outcome");
+        const second = await ops.engine.put("vendo_effects", { id: "eff_engine_policy", data: { subject: "user_1", outcome: { sent: 2 } } });
+        assertDeepEqual(
+          (second.data as Record<string, unknown>)["outcome"],
+          { sent: 1 },
+          "the second put overwrote a receipt instead of returning the recorded one",
+        );
+        const held = await ops.engine.get("vendo_effects", "eff_engine_policy");
+        assertDeepEqual(
+          (held?.data as Record<string, unknown> | undefined)?.["outcome"],
+          { sent: 1 },
+          "the effect ledger kept the second outcome",
+        );
+      }),
+
+      /** There is exactly ONE dynamic engine collection and ONE builder for it.
+          Pin intents are rows INSIDE the app-history collection, not a second
+          drawer — a second pattern is how an allowlist rots into a wildcard. */
+      opsCase(opts, "engine accepts the one dynamic app-history pattern and refuses an illegal app id", async (ops) => {
+        const collection = engineAppHistory("app_x");
+        const put = await ops.engine.put(collection, { id: "ver_1", data: { version: 1 } });
+        const got = await ops.engine.get(collection, "ver_1");
+        assertDeepEqual(got, put, "the composed app-history collection did not round-trip");
+
+        await assertThrowsCode(
+          async () => engineAppHistory(""),
+          "validation",
+          "an empty app id handed to the app-history builder",
+        );
+      }),
+
+      // =====================================================================
+      // blobs
+      // =====================================================================
+
+      opsCase(opts, "blobs.put and get round-trip bytes and contentType", async (ops) => {
+        const bytes = new Uint8Array([0, 1, 2, 127, 255]);
+        await ops.blobs.put("conf_brt", "file.bin", bytes, { contentType: "application/octet-stream" });
+        const result = await ops.blobs.get("conf_brt", "file.bin");
+        assert(result !== null, "stored blob returned null");
+        assertBytesEqual(result!.bytes, bytes, "blob bytes did not round-trip");
+        assert(result!.contentType === "application/octet-stream", "blob contentType did not round-trip");
+      }),
+
+      opsCase(opts, "blobs.get missing returns null", async (ops) => {
+        assert(await ops.blobs.get("conf_bmiss", "absent") === null, "missing blob did not return null");
+      }),
+
+      opsCase(opts, "blobs.delete removes a blob", async (ops) => {
+        await ops.blobs.put("conf_bdel", "del.bin", new Uint8Array([1]));
+        await ops.blobs.delete("conf_bdel", "del.bin");
+        assert(await ops.blobs.get("conf_bdel", "del.bin") === null, "deleted blob remained readable");
+      }),
+
+      opsCase(opts, "blobs.list filters by prefix", async (ops) => {
+        await ops.blobs.put("conf_blist", "images/a.png", new Uint8Array([1]));
+        await ops.blobs.put("conf_blist", "images/b.png", new Uint8Array([2]));
+        await ops.blobs.put("conf_blist", "docs/a.txt", new Uint8Array([3]));
+        assertDeepEqual(
+          (await ops.blobs.list("conf_blist", "images/")).sort(),
+          ["images/a.png", "images/b.png"],
+          "blob prefix list returned the wrong keys",
+        );
+      }),
+
+      /** The namespace is the blob store's ONLY partition, and every workspace
+          object and every host upload is separated by nothing else. An implementation that composes its physical key by
+          joining the namespace and the key with a delimiter — the obvious way
+          to build one on a flat object store — aliases namespace `a` + key
+          `b/c` onto namespace `a/b` + key `c`, and the read that crosses is
+          silent. Every verb, because every verb composes the key. */
+      opsCase(opts, "blobs keep two namespaces apart on every verb", async (ops) => {
+        const key = "shared.bin";
+        await ops.blobs.put("conf_ns_a", key, new Uint8Array([1]));
+        await ops.blobs.put("conf_ns_b", key, new Uint8Array([2]));
+        // A key each namespace holds ALONE, so a listing that forgot its
+        // partition is caught here rather than three assertions later — with
+        // only the shared key, a namespace-blind list returns the right answer
+        // by coincidence.
+        await ops.blobs.put("conf_ns_a", "only_a.bin", new Uint8Array([3]));
+        await ops.blobs.put("conf_ns_b", "only_b.bin", new Uint8Array([4]));
+
+        assertBytesEqual((await ops.blobs.get("conf_ns_a", key))!.bytes, new Uint8Array([1]), "one namespace read another's bytes");
+        assertBytesEqual((await ops.blobs.get("conf_ns_b", key))!.bytes, new Uint8Array([2]), "one namespace read another's bytes");
+        assert(await ops.blobs.get("conf_ns_a", "only_b.bin") === null, "one namespace read a key only its neighbour holds");
+        assertDeepEqual((await ops.blobs.list("conf_ns_a")).sort(), ["only_a.bin", key], "a namespace listed a neighbour's keys");
+        assert(await ops.blobs.get("conf_ns_c", key) === null, "an empty namespace read a neighbour's blob");
+
+        await ops.blobs.delete("conf_ns_a", key);
+        assert(await ops.blobs.get("conf_ns_a", key) === null, "the delete left its own namespace's blob behind");
+        assert(await ops.blobs.get("conf_ns_b", key) !== null, "a delete in one namespace destroyed another's blob");
+        assertDeepEqual(await ops.blobs.list("conf_ns_a"), ["only_a.bin"], "a deleted key stayed in its namespace's listing");
+      }),
+
+      /** Zero bytes is CONTENT, not absence: an empty file a user uploaded, a
+          truncated log, a placeholder an app wrote. `get` answering null for it
+          would make an existing key indistinguishable from one nobody ever
+          wrote, and the caller's next move — write it again — is the one thing
+          that must not follow from a successful put. */
+      opsCase(opts, "blobs round-trip a zero-byte payload as content, not absence", async (ops) => {
+        await ops.blobs.put("conf_bempty", "empty.bin", new Uint8Array([]), { contentType: "text/plain" });
+        const got = await ops.blobs.get("conf_bempty", "empty.bin");
+        assert(got !== null, "a stored zero-byte blob read back as absent");
+        assertBytesEqual(got!.bytes, new Uint8Array([]), "a zero-byte blob did not round-trip");
+        assertDeepEqual(await ops.blobs.list("conf_bempty"), ["empty.bin"], "a zero-byte blob is missing from its namespace's listing");
+      }),
+
+      // =====================================================================
+      // transcripts
+      // =====================================================================
+
+      opsCase(opts, "transcripts.putThread and getThread round-trip", async (ops) => {
+        const thread = { id: "thr_t1", subject: "user_1", messages: [{ role: "user", text: "hi" }], title: "Hello" };
+        const put = await ops.transcripts.putThread(thread);
+        assert(put.id === "thr_t1", "putThread did not echo id");
+        const got = await ops.transcripts.getThread("thr_t1");
+        assert(got !== null, "getThread returned null after putThread");
+        assertDeepEqual(got!.id, "thr_t1", "getThread returned wrong id");
+        const data = got!.data as Record<string, unknown>;
+        assert(data["subject"] === "user_1", "thread subject not round-tripped");
+        assert(Array.isArray(data["messages"]), "thread messages not round-tripped");
+      }),
+
+      opsCase(opts, "transcripts.listThreads filters by subject", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_lt1", subject: "alice", messages: [] });
+        await ops.transcripts.putThread({ id: "thr_lt2", subject: "bob", messages: [] });
+        await ops.transcripts.putThread({ id: "thr_lt3", subject: "alice", messages: [] });
+        const result = await ops.transcripts.listThreads({ subject: "alice" });
+        const ids = result.records.map((r) => r.id).sort();
+        assertDeepEqual(ids, ["thr_lt1", "thr_lt3"], "listThreads subject filter returned wrong threads");
+      }),
+
+      opsCase(opts, "transcripts.listThreads paginates without loss or duplicates", async (ops) => {
+        const expected = ["thr_ta", "thr_tb", "thr_tc", "thr_td", "thr_te"];
+        for (const id of expected) await ops.transcripts.putThread({ id, subject: "pager", messages: [] });
+        await ops.transcripts.putThread({ id: "thr_other", subject: "elsewhere", messages: [] });
+        await assertPaginates("transcripts.listThreads", expected, async (cursor) => {
+          const page = await ops.transcripts.listThreads({ subject: "pager", limit: PAGE, cursor });
+          return { ids: page.records.map((r) => r.id), cursor: page.cursor };
+        });
+      }),
+
+      /** F4: the delete is a cascade. Asserted by re-creating the id — orphaned
+          messages or a surviving answer ledger surface there, where a
+          `getThread() === null` check is blind to them. */
+      opsCase(opts, "transcripts.deleteThread cascades to messages, answers, and harness state", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_dt1", subject: "u", messages: [] });
+        await ops.transcripts.putMessage("thr_dt1", { id: "msg_1", role: "user", text: "hi" });
+        await ops.transcripts.recordAnswer("thr_dt1", { id: "ans_1", value: 42 });
+        await ops.harness.set("thr_dt1", "u", { session: "native_1" });
+
+        await ops.transcripts.deleteThread("thr_dt1");
+        assert(await ops.transcripts.getThread("thr_dt1") === null, "deleted thread remained readable");
+        assert(await ops.harness.get("thr_dt1", "u") === null, "deleted thread left its harness state behind");
+
+        await ops.transcripts.putThread({ id: "thr_dt1", subject: "u", messages: [] });
+        await ops.transcripts.recordAnswer("thr_dt1", { id: "ans_1", value: 42 });
+        const revived = await ops.transcripts.getThread("thr_dt1");
+        const messages = (revived!.data as Record<string, unknown>)["messages"] as unknown[];
+        assert(messages.length === 1, `the re-created thread should hold only its new answer, got ${messages.length} messages`);
+      }),
+
+      opsCase(opts, "transcripts.putMessage appends to existing thread", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_pm1", subject: "u", messages: [{ role: "user", text: "1" }] });
+        await ops.transcripts.putMessage("thr_pm1", { role: "assistant", text: "2" });
+        const got = await ops.transcripts.getThread("thr_pm1");
+        const msgs = (got!.data as Record<string, unknown>)["messages"] as unknown[];
+        assert(msgs.length === 2, `putMessage did not append: got ${msgs.length} messages`);
+      }),
+
+      /** putMessage is an UPSERT, not an append-only log: a message re-sent
+          under an id the thread already holds REPLACES it, in place. That is
+          how an edit lands and how an approval flips from pending to answered;
+          appending instead leaves two messages under one id, which the thread
+          engines refuse outright, so the flip could never persist. */
+      opsCase(opts, "transcripts.putMessage edits by id, in place", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_pm2", subject: "u", messages: [] });
+        await ops.transcripts.putMessage("thr_pm2", { id: "msg_a", role: "user", text: "ask" });
+        await ops.transcripts.putMessage("thr_pm2", { id: "msg_b", role: "assistant", text: "answer" });
+        await ops.transcripts.putMessage("thr_pm2", { id: "msg_a", role: "user", text: "ask (edited)" });
+
+        const got = await ops.transcripts.getThread("thr_pm2");
+        const msgs = (got!.data as Record<string, unknown>)["messages"] as Array<Record<string, unknown>>;
+        assert(msgs.length === 2, `the edit should not have added a message: got ${msgs.length}`);
+        assertDeepEqual(
+          msgs.map((message) => [message["id"], message["text"]]),
+          [["msg_a", "ask (edited)"], ["msg_b", "answer"]],
+          "the edit did not replace its message in place",
+        );
+      }),
+
+      opsCase(opts, "transcripts.recordAnswer records answer; duplicate same-id refused as conflict", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_ra1", subject: "u", messages: [] });
+        await ops.transcripts.recordAnswer("thr_ra1", { id: "ans_1", value: 42 });
+        await assertThrowsCode(
+          () => ops.transcripts.recordAnswer("thr_ra1", { id: "ans_1", value: 42 }),
+          "conflict",
+          "a duplicate answer id",
+        );
+      }),
+
+      // =====================================================================
+      // harness
+      // =====================================================================
+
+      opsCase(opts, "harness.set and get round-trip state", async (ops) => {
+        const state = { counter: 5, items: ["a", "b"] };
+        await ops.transcripts.putThread({ id: "thr_h1", subject: "user_1", messages: [] });
+        await ops.harness.set("thr_h1", "user_1", state);
+        const got = await ops.harness.get("thr_h1", "user_1");
+        assertDeepEqual(got, state, "harness state did not round-trip");
+      }),
+
+      opsCase(opts, "harness.get missing returns null", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_h2", subject: "user_1", messages: [] });
+        assert(await ops.harness.get("thr_h2", "user_1") === null, "a thread with no slot did not return null");
+        assert(await ops.harness.get("thr_absent", "user_1") === null, "a missing thread did not return null");
+      }),
+
+      opsCase(opts, "harness.clear removes state", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_h3", subject: "user_2", messages: [] });
+        await ops.harness.set("thr_h3", "user_2", { v: 1 });
+        await ops.harness.clear("thr_h3", "user_2");
+        assert(await ops.harness.get("thr_h3", "user_2") === null, "cleared harness state remained readable");
+      }),
+
+      /** ONE slot per thread: a second `set` replaces the bookmark rather than
+          adding a second one beside it. The old table keyed (appId, subject) and
+          could hold many rows under one key; the thread row can hold exactly
+          one, and that is the property the whole move exists to get. */
+      opsCase(opts, "harness.set replaces the slot rather than accumulating", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_h4", subject: "user_1", messages: [] });
+        await ops.harness.set("thr_h4", "user_1", { session: "native_1" });
+        await ops.harness.set("thr_h4", "user_1", { session: "native_2" });
+        assertDeepEqual(await ops.harness.get("thr_h4", "user_1"), { session: "native_2" }, "the slot did not replace in place");
+      }),
+
+      /** `subject` is the thread's OWNER, and it is authority. A foreign subject
+          naming someone else's thread reads as an empty slot and writes nothing
+          — otherwise one person could resume, or poison, another's session. */
+      opsCase(opts, "harness state is the thread OWNER's, and a foreign subject reaches none of it", async (ops) => {
+        await ops.transcripts.putThread({ id: "thr_h5", subject: "owner_1", messages: [] });
+        await ops.harness.set("thr_h5", "owner_1", { session: "native_1" });
+
+        assert(await ops.harness.get("thr_h5", "intruder") === null, "a foreign subject read the owner's harness state");
+        await ops.harness.clear("thr_h5", "intruder");
+        assertDeepEqual(
+          await ops.harness.get("thr_h5", "owner_1"),
+          { session: "native_1" },
+          "a foreign subject's clear destroyed the owner's harness state",
+        );
+      }),
+
+      /** No thread, no slot. `set` refuses rather than minting a bookmark that
+          belongs to no conversation — a row like that is one no erase and no
+          thread deletion could ever reach. */
+      opsCase(opts, "harness.set on a thread that does not exist is refused", async (ops) => {
+        await assertThrowsCode(
+          () => ops.harness.set("thr_never", "user_1", { v: 1 }),
+          "not-found",
+          "harness.set minted a slot for a thread that does not exist",
+        );
+      }),
+
+      // =====================================================================
+      // workspace
+      // =====================================================================
+
+      opsCase(opts, "workspace.commit and read round-trip", async (ops) => {
+        await ops.workspace.commit([{ path: "a.json", data: { x: 1 } }, { path: "b.json", data: { y: 2 } }]);
+        const result = await ops.workspace.read(["a.json", "b.json", "missing.json"]);
+        assertDeepEqual(result["a.json"], { x: 1 }, "workspace read did not round-trip a.json");
+        assertDeepEqual(result["b.json"], { y: 2 }, "workspace read did not round-trip b.json");
+        assert(!("missing.json" in result), "workspace read returned a missing path");
+      }),
+
+      /** Reading NO paths has exactly one possible answer, and every caller that
+          builds its path list from a filter eventually asks for it. A refusal
+          here forces a `paths.length === 0` guard at every call site, and the
+          one that forgets it turns an empty result set into a thrown error —
+          which is why the empty answer is contract rather than each caller's
+          problem. */
+      opsCase(opts, "workspace.read of no paths is an empty answer, not a refusal", async (ops) => {
+        await ops.workspace.commit([{ path: "present.json", data: { v: 1 } }]);
+        assertDeepEqual(await ops.workspace.read([]), {}, "reading no paths did not answer with an empty result");
+      }),
+
+      /** Binary content rides `{"$vendoWorkspaceBytes": base64, contentType}`
+          (store.ts) — an ENVELOPE, not a type the store knows: the workspace
+          rows adapter above these ops encodes and decodes it, and to the store
+          it is ordinary JSON that must come back exactly as it went in. An
+          implementation that recognises the sentinel and helpfully re-encodes
+          it, or that normalises the base64 padding, hands the adapter above
+          bytes that are not the bytes it stored — and the corruption is
+          invisible until someone opens the file. */
+      opsCase(opts, "workspace round-trips the $vendoWorkspaceBytes envelope untouched", async (ops) => {
+        // Deliberately padded, and deliberately not valid UTF-8 once decoded:
+        // the bytes are 0x00 0xFF 0x10, which is what a store that decodes and
+        // re-encodes through a string will mangle.
+        const envelope = { $vendoWorkspaceBytes: "AP8Q", contentType: "application/octet-stream" };
+        await ops.workspace.commit([{ path: "binary.bin", data: envelope }]);
+        assertDeepEqual(
+          (await ops.workspace.read(["binary.bin"]))["binary.bin"],
+          envelope,
+          "the binary envelope did not round-trip byte-for-byte",
+        );
+        // And it is an ordinary entry in the index: the envelope is content, not
+        // a second kind of file.
+        assertDeepEqual(
+          (await ops.workspace.index()).entries.map((entry) => stringField(entry, "path", "workspace.index")),
+          ["binary.bin"],
+          "the binary entry is missing from the index",
+        );
+      }),
+
+      opsCase(opts, "workspace.index paginates without loss or duplicates", async (ops) => {
+        const expected = ["xa.json", "xb.json", "xc.json", "xd.json", "xe.json"];
+        await ops.workspace.commit(expected.map((path) => ({ path, data: { path } })));
+        await assertPaginates("workspace.index", expected, async (cursor) => {
+          const page = await ops.workspace.index({ limit: PAGE, cursor });
+          return {
+            ids: page.entries.map((entry) => stringField(entry, "path", "workspace.index")),
+            cursor: page.cursor,
+          };
+        });
+      }),
+
+      opsCase(opts, "workspace.history paginates without loss or duplicates", async (ops) => {
+        for (const v of [1, 2, 3, 4, 5]) await ops.workspace.commit([{ path: `h${v}.json`, data: { v } }]);
+        const all = (await ops.workspace.history()).entries
+          .map((entry) => stringField(entry, "commitId", "workspace.history"));
+        assert(all.length === 5, `history should hold one entry per commit, got ${all.length}`);
+        await assertPaginates("workspace.history", all, async (cursor) => {
+          const page = await ops.workspace.history({ limit: PAGE, cursor });
+          return {
+            ids: page.entries.map((entry) => stringField(entry, "commitId", "workspace.history")),
+            cursor: page.cursor,
+          };
+        });
+      }),
+
+      /** The idempotency key on the wire's ONE mutation header, proved at the
+          op that carries it: a replay returns the recorded result instead of
+          applying the entries a second time. */
+      opsCase(opts, "workspace.commit replays an idempotency key without applying it twice", async (ops) => {
+        const entries = [{ path: "idem.json", data: { v: 1 } }];
+        await ops.workspace.commit(entries, { idempotencyKey: "idem_1" });
+        await ops.workspace.commit([{ path: "idem.json", data: { v: 2 } }]);
+        const before = (await ops.workspace.history()).entries.length;
+        await ops.workspace.commit(entries, { idempotencyKey: "idem_1" });
+        assertDeepEqual(
+          (await ops.workspace.read(["idem.json"]))["idem.json"],
+          { v: 2 },
+          "the replay re-applied its entries over a later commit",
+        );
+        const after = (await ops.workspace.history()).entries.length;
+        assert(after === before, `the replay added ${after - before} history entries`);
+      }),
+
+      /** The key DOUBLE-FIRED: one logical commit, two requests in flight,
+          which is what a client retry on a timeout actually looks like.
+          The contract promises REPLAY protection, not mutual exclusion
+          (IdempotencyLedger, store.ts) — two concurrent requests carrying one
+          key MAY both find it fresh and both execute — so nothing here asserts
+          that one of them lost. What it asserts is the promise that IS made:
+          once the key has an answer, a later request carrying it applies
+          NOTHING further. An implementation whose ledger is written after the
+          mutation, or in a different transaction from it, fails here and passes
+          the sequential replay case above. */
+      opsCase(opts, "workspace.commit replays a double-fired idempotency key once it has an answer", async (ops) => {
+        const entries = [{ path: "idem_race.json", data: { v: 1 } }];
+        const settled = await race(2, () => ops.workspace.commit(entries, { idempotencyKey: "idem_race" }));
+        // A raced request either executes or is told it lost the key. Anything
+        // else — a TypeError, a driver's deadlock, a bare 500 — is not an answer.
+        for (const one of settled) {
+          const code = refusalCode(one);
+          assert(
+            one.status === "fulfilled" || code === "conflict",
+            `a raced keyed commit failed for a reason other than losing its key: ${String(code ?? one)}`,
+          );
+        }
+        assert(won(settled).length >= 1, "both raced requests carrying one key failed");
+
+        const history = (await ops.workspace.history()).entries.length;
+        const content = (await ops.workspace.read(["idem_race.json"]))["idem_race.json"];
+        assertDeepEqual(content, { v: 1 }, "the raced commit did not land its entries");
+
+        // The replay, sequentially, after the race has settled — the moment the
+        // contract does make a promise about.
+        await ops.workspace.commit(entries, { idempotencyKey: "idem_race" });
+        assert(
+          (await ops.workspace.history()).entries.length === history,
+          "a replay after the key already had an answer committed again",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read(["idem_race.json"]))["idem_race.json"],
+          content,
+          "a replay after the key already had an answer changed the file",
+        );
+      }),
+
+      /** An idempotency key belongs to the OWNER that sent it. Clients pick
+          their own keys and two of them will pick the same one — `IdempotencyScope`
+          says so in as many words (store.ts: the tenant is part of the key
+          "because a mount that serves many tenants out of one schema would
+          otherwise let one tenant's key collide with another's"). A ledger keyed
+          on the key alone answers the second owner's commit with the first
+          owner's result, or refuses it as a body mismatch: either way one
+          tenant's write is decided by another tenant's traffic. */
+      opsCase(opts, "workspace.commit's idempotency key is scoped to its owner", async (ops) => {
+        const key = "shared_key";
+        await ops.workspace.commit([{ path: "keyed.json", data: { whose: "a" } }], { idempotencyKey: key, owner: "kown_a" });
+        await ops.workspace.commit([{ path: "keyed.json", data: { whose: "b" } }], { idempotencyKey: key, owner: "kown_b" });
+        assertDeepEqual(
+          (await ops.workspace.read(["keyed.json"], { owner: "kown_b" }))["keyed.json"],
+          { whose: "b" },
+          "one owner's commit was answered out of another owner's idempotency ledger",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read(["keyed.json"], { owner: "kown_a" }))["keyed.json"],
+          { whose: "a" },
+          "the second owner's commit landed in the first owner's drawer",
+        );
+        // And within one owner the key still replays, rather than the scope
+        // simply having been widened until nothing collides.
+        await ops.workspace.commit([{ path: "keyed.json", data: { whose: "a" } }], { idempotencyKey: key, owner: "kown_a" });
+        assert(
+          (await ops.workspace.history({ owner: "kown_a" })).entries.length === 1,
+          "the key stopped replaying for the owner that first used it",
+        );
+      }),
+
+      opsCase(opts, "workspace.commit refuses a replayed idempotency key with a different body", async (ops) => {
+        await ops.workspace.commit([{ path: "idem2.json", data: { v: 1 } }], { idempotencyKey: "idem_2" });
+        await assertThrowsCode(
+          () => ops.workspace.commit([{ path: "idem2.json", data: { v: 99 } }], { idempotencyKey: "idem_2" }),
+          "conflict",
+          "an idempotency key replayed with a different body",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read(["idem2.json"]))["idem2.json"],
+          { v: 1 },
+          "the refused replay applied its entries anyway",
+        );
+      }),
+
+      opsCase(opts, "workspace.history records one commit per landed write", async (ops) => {
+        await ops.workspace.commit([{ path: "hist.json", data: { v: 1 } }]);
+        const before = new Set((await ops.workspace.history()).entries
+          .map((entry) => stringField(entry, "commitId", "workspace.history")));
+        await ops.workspace.commit([{ path: "hist.json", data: { v: 2 } }]);
+        const added = (await ops.workspace.history()).entries
+          .map((entry) => stringField(entry, "commitId", "workspace.history"))
+          .filter((id) => !before.has(id));
+        assert(added.length === 1, `one commit should have been added to history, got ${added.length}`);
+      }),
+
+      /** The workspace is the last op family to name its owner, and until it
+          did, every end user of one deployment shared ONE drawer. Two owners,
+          one path: no read, index or history may cross. */
+      opsCase(opts, "workspace ops keep two owners' drawers apart", async (ops) => {
+        const path = "shared.json";
+        await ops.workspace.commit([{ path, data: { who: "a" } }], { owner: "own_a" });
+        await ops.workspace.commit([{ path, data: { who: "b" } }], { owner: "own_b" });
+
+        assertDeepEqual(
+          (await ops.workspace.read([path], { owner: "own_a" }))[path],
+          { who: "a" },
+          "one owner's read returned another owner's file",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read([path], { owner: "own_b" }))[path],
+          { who: "b" },
+          "one owner's read returned another owner's file",
+        );
+        assertDeepEqual(
+          await ops.workspace.read([path], { owner: "own_c" }),
+          {},
+          "an owner with no files read someone else's drawer",
+        );
+        assertDeepEqual(
+          (await ops.workspace.index({ owner: "own_a" })).entries
+            .map((entry) => stringField(entry, "path", "workspace.index")),
+          [path],
+          "one owner's index listed another owner's files",
+        );
+        assertDeepEqual(
+          (await ops.workspace.index({ owner: "own_c" })).entries,
+          [],
+          "an owner with no files indexed someone else's drawer",
+        );
+
+        const commitsOf = async (owner: string): Promise<string[]> =>
+          (await ops.workspace.history({ owner })).entries
+            .map((entry) => stringField(entry, "commitId", "workspace.history"));
+        const [ofA, ofB] = [await commitsOf("own_a"), await commitsOf("own_b")];
+        assert(ofA.length === 1 && ofB.length === 1, "history did not filter by owner");
+        assert(ofA[0] !== ofB[0], "two owners' histories returned the same commit");
+      }),
+
+      /** Deletion was inexpressible over the wire: a hosted workspace could
+          add and overwrite files forever but never drop one. */
+      opsCase(opts, "workspace.commit removes a path with a delete tombstone", async (ops) => {
+        await ops.workspace.commit([{ path: "tomb.json", data: { v: 1 } }]);
+        await ops.workspace.commit([{ path: "tomb.json", delete: true }]);
+        assertDeepEqual(
+          await ops.workspace.read(["tomb.json"]),
+          {},
+          "the tombstone left the file behind",
+        );
+        assertDeepEqual(
+          (await ops.workspace.index()).entries
+            .map((entry) => stringField(entry, "path", "workspace.index")),
+          [],
+          "the tombstoned path is still in the index",
+        );
+        // The tombstone is itself a commit, so the trail still says what happened.
+        assert(
+          (await ops.workspace.history({ path: "tomb.json" })).entries.length === 2,
+          "the tombstone did not record a commit of its own",
+        );
+      }),
+
+      // ---------------------------------------------------------------------
+      // the path leg of history — one file's trail, rather than the whole
+      // ledger filtered by hand.
+      // ---------------------------------------------------------------------
+
+      opsCase(opts, "workspace.history narrows to the commits that touched one path", async (ops) => {
+        await ops.workspace.commit([{ path: "p-mine.json", data: { v: 1 } }]);
+        await ops.workspace.commit([{ path: "p-other.json", data: { v: 1 } }]);
+        await ops.workspace.commit([{ path: "p-mine.json", data: { v: 2 } }]);
+
+        const commitsOf = async (path: string): Promise<unknown[]> =>
+          (await ops.workspace.history({ path })).entries;
+        const mine = await commitsOf("p-mine.json");
+        assert(mine.length === 2, `path history should hold this path's two commits, got ${mine.length}`);
+        assert(
+          (await commitsOf("p-other.json")).length === 1,
+          "path history returned commits that did not touch the path",
+        );
+        assertDeepEqual(await commitsOf("p-never.json"), [], "path history invented commits for an untouched path");
+
+        // Newest first, and the newest one names the revision it superseded,
+        // which is what distinguishes an overwrite from a create. The commit
+        // that CREATED the path superseded nothing, so it names no revision.
+        const newest = mine[0];
+        assert(
+          numberField(newest, "revision", "workspace.history") > 0,
+          "the overwriting commit did not name the revision it superseded",
+        );
+        assert(
+          (mine[1] as Record<string, unknown>)["revision"] === undefined,
+          "the commit that created the path claimed to have superseded a revision",
+        );
+      }),
+
+      opsCase(opts, "the path leg of history keeps two owners' drawers apart", async (ops) => {
+        const path = "p-shared.json";
+        for (const owner of ["pown_a", "pown_b"]) {
+          await ops.workspace.commit([{ path, data: { who: owner, v: 1 } }], { owner });
+          await ops.workspace.commit([{ path, data: { who: owner, v: 2 } }], { owner });
+        }
+        assert(
+          (await ops.workspace.history({ path, owner: "pown_a" })).entries.length === 2,
+          "one owner's path history did not hold that owner's two commits",
+        );
+        assertDeepEqual(
+          (await ops.workspace.history({ path, owner: "pown_c" })).entries,
+          [],
+          "an owner with no files read another owner's path history",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read([path], { owner: "pown_b" }))[path],
+          { who: "pown_b", v: 2 },
+          "one owner's path history reached into another owner's drawer",
+        );
+      }),
+
+      /** The `/orgs` mounts commit under strict compare-and-swap: a write built
+          on a revision that has moved must be refused, not silently applied
+          over a colleague's edit. */
+      opsCase(opts, "workspace.commit refuses a stale expectedRevision and applies nothing", async (ops) => {
+        await ops.workspace.commit([{ path: "cas.json", data: { v: 1 } }]);
+        const revision = numberField(
+          (await ops.workspace.index()).entries[0],
+          "revision",
+          "workspace.index",
+        );
+        // The head moves under the caller.
+        await ops.workspace.commit([{ path: "cas.json", data: { v: 2 } }]);
+
+        await assertThrowsCode(
+          () => ops.workspace.commit([
+            { path: "cas.json", data: { v: 3 }, expectedRevision: revision },
+            { path: "cas-other.json", data: { v: 3 } },
+          ]),
+          "conflict",
+          "committing against a revision that has moved",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read(["cas.json"]))["cas.json"],
+          { v: 2 },
+          "the refused commit overwrote the newer content",
+        );
+        assert(
+          !("cas-other.json" in await ops.workspace.read(["cas-other.json"])),
+          "the refused commit applied its non-conflicting entry anyway",
+        );
+
+        // Re-aimed at the live head, the same commit lands.
+        const head = numberField(
+          (await ops.workspace.index()).entries
+            .find((entry) => (entry as { path?: unknown }).path === "cas.json"),
+          "revision",
+          "workspace.index",
+        );
+        await ops.workspace.commit([{ path: "cas.json", data: { v: 3 }, expectedRevision: head }]);
+        assertDeepEqual(
+          (await ops.workspace.read(["cas.json"]))["cas.json"],
+          { v: 3 },
+          "a commit aimed at the live revision did not land",
+        );
+      }),
+
+      /** The commit-conflict's DETAIL. The message names the paths in prose,
+          which is enough for a human and useless to the caller that has to act:
+          `workspaceOpsRows.commitAll` re-reads the index and re-derives the
+          conflicting paths by hand precisely because it cannot get them out of
+          the refusal. `detail.conflicts` is that list, structured — and it is
+          named here rather than left to each implementation because a refusal
+          whose payload has no shape is a refusal nobody can program against. */
+      opsCase(opts, "workspace.commit's conflict names the paths it refused on", async (ops) => {
+        await ops.workspace.commit([{ path: "d-one.json", data: { v: 1 } }, { path: "d-two.json", data: { v: 1 } }]);
+        const revisionOf = async (path: string): Promise<number> => numberField(
+          (await ops.workspace.index()).entries.find((entry) => (entry as { path?: unknown }).path === path),
+          "revision",
+          "workspace.index",
+        );
+        const stale = { one: await revisionOf("d-one.json"), two: await revisionOf("d-two.json") };
+        // Both heads move under the caller, so BOTH guarded entries conflict.
+        await ops.workspace.commit([{ path: "d-one.json", data: { v: 2 } }, { path: "d-two.json", data: { v: 2 } }]);
+
+        const refusal = await ops.workspace.commit([
+          { path: "d-one.json", data: { v: 3 }, expectedRevision: stale.one },
+          { path: "d-two.json", data: { v: 3 }, expectedRevision: stale.two },
+        ]).then(() => null, (error: unknown) => error);
+        assert((refusal as { code?: unknown } | null)?.code === "conflict", `a stale commit should refuse with conflict, got ${String(refusal)}`);
+        const detail = (refusal as { detail?: unknown } | null)?.detail as { conflicts?: unknown } | undefined;
+        assert(detail !== undefined, "the refusal carried no detail, so the caller cannot learn which paths moved");
+        assert(Array.isArray(detail.conflicts), `the refusal's detail.conflicts is not an array: ${JSON.stringify(detail)}`);
+        assertDeepEqual(
+          [...detail.conflicts as string[]].sort(),
+          ["d-one.json", "d-two.json"],
+          "detail.conflicts did not name exactly the paths that moved",
+        );
+      }),
+
+      /** The commit CAS, raced — two colleagues who read one org file at the
+          same instant and both write it back. Sequentially the loser holds a
+          revision that has visibly moved; here NEITHER has, at the moment they
+          check, and only an atomic compare inside the write itself can tell
+          them apart. A backend that reads the head, compares in application
+          code, and then writes lets both land, and the first colleague's edit
+          is gone with no error anywhere. Either may win; exactly one must. */
+      opsCase(opts, "workspace.commit lands exactly one of two simultaneous compare-and-swaps", async (ops) => {
+        await ops.workspace.commit([{ path: "cas-race.json", data: { by: "seed" } }]);
+        const revision = numberField(
+          (await ops.workspace.index()).entries.find((entry) => (entry as { path?: unknown }).path === "cas-race.json"),
+          "revision",
+          "workspace.index",
+        );
+        const before = (await ops.workspace.history()).entries.length;
+
+        const writers = ["colleague_a", "colleague_b"];
+        const settled = await race(writers.length, (attempt) =>
+          ops.workspace.commit([{ path: "cas-race.json", data: { by: writers[attempt] }, expectedRevision: revision }]));
+        const landed = settled.filter((one) => one.status === "fulfilled");
+        assert(landed.length === 1, `exactly one commit off one revision may land, ${landed.length} did`);
+        for (const one of settled) {
+          if (one.status === "fulfilled") continue;
+          assert(refusalCode(one) === "conflict", `the losing commit was refused as ${String(refusalCode(one))}, not conflict`);
+        }
+        const held = (await ops.workspace.read(["cas-race.json"]))["cas-race.json"] as { by?: string };
+        assert(writers.includes(held.by ?? ""), `the file holds ${JSON.stringify(held)}, which neither writer wrote`);
+        assert(
+          (await ops.workspace.history()).entries.length === before + 1,
+          "the refused commit left a commit in the trail",
+        );
+      }),
+
+      /** The owner a workspace verb falls back to when the caller names none is
+          the mount's own (store.ts): the local backend and the memory reference
+          resolve it to a bound single-player constant, and a hosted mount
+          resolves it server-side, where OSS cannot see the value. What every
+          mount owes regardless is COHERENCE — the same default drawer on all
+          four verbs. Two of the hosted client's four verbs spread the query
+          straight onto the body rather than going through its owner helper, so
+          a mount whose index and history default differently from its read and
+          commit is the shape this pins, not a hypothetical.
+          It cannot pin that the hosted default EQUALS the local one; nothing in
+          OSS can, and this comment is where that ends. */
+      opsCase(opts, "the workspace's default owner is one drawer on every verb", async (ops) => {
+        await ops.workspace.commit([{ path: "default.json", data: { v: 1 } }]);
+        assertDeepEqual(
+          (await ops.workspace.read(["default.json"]))["default.json"],
+          { v: 1 },
+          "a read with no owner missed a commit with no owner",
+        );
+        assertDeepEqual(
+          (await ops.workspace.index()).entries.map((entry) => stringField(entry, "path", "workspace.index")),
+          ["default.json"],
+          "an index with no owner did not see a commit with no owner",
+        );
+        assert(
+          (await ops.workspace.history({ path: "default.json" })).entries.length === 1,
+          "a history with no owner did not see a commit with no owner",
+        );
+        // And the default drawer is A drawer, not everyone's: an explicitly
+        // named owner that has committed nothing sees nothing.
+        assertDeepEqual(
+          await ops.workspace.read(["default.json"], { owner: "own_elsewhere" }),
+          {},
+          "a named owner read the default drawer's file",
+        );
+      }),
+
+      /** A DELETE is a commit against a revision too. Without this, a turn that
+          checked out an org file, lost the head to a colleague, and then removed
+          the path erased content it had never seen — the one mutation strict
+          mounts cannot take back. */
+      opsCase(opts, "workspace.commit refuses a stale expectedRevision on a tombstone", async (ops) => {
+        await ops.workspace.commit([{ path: "cas-del.json", data: { v: 1 } }]);
+        const revision = numberField(
+          (await ops.workspace.index()).entries
+            .find((entry) => (entry as { path?: unknown }).path === "cas-del.json"),
+          "revision",
+          "workspace.index",
+        );
+        // The head moves under the caller holding `revision`.
+        await ops.workspace.commit([{ path: "cas-del.json", data: { v: 2 } }]);
+
+        await assertThrowsCode(
+          () => ops.workspace.commit([{ path: "cas-del.json", delete: true, expectedRevision: revision }]),
+          "conflict",
+          "deleting a path whose revision has moved",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read(["cas-del.json"]))["cas-del.json"],
+          { v: 2 },
+          "a stale tombstone deleted the newer content",
+        );
+      }),
+
+      /** Bytes that happen to match the head do not make a stale commit fresh:
+          the caller still read a revision that has moved, and the contract's
+          answer to that is `conflict`, whatever the entry would have written. */
+      opsCase(opts, "workspace.commit refuses a stale expectedRevision whose bytes already match", async (ops) => {
+        await ops.workspace.commit([{ path: "cas-same.json", data: { v: 1 } }]);
+        const revision = numberField(
+          (await ops.workspace.index()).entries
+            .find((entry) => (entry as { path?: unknown }).path === "cas-same.json"),
+          "revision",
+          "workspace.index",
+        );
+        await ops.workspace.commit([{ path: "cas-same.json", data: { v: 2 } }]);
+
+        await assertThrowsCode(
+          () => ops.workspace.commit([{ path: "cas-same.json", data: { v: 2 }, expectedRevision: revision }]),
+          "conflict",
+          "committing the head's own bytes against a revision that has moved",
+        );
+      }),
+
+      /** Two entries for one path leave the commit with no single before-image,
+          so the path's trail would name two superseded revisions under one
+          commit id and neither would be THE one it replaced. Refused at the
+          door instead. */
+      opsCase(opts, "workspace.commit refuses the same path twice in one commit, and an empty commit", async (ops) => {
+        await assertThrowsCode(
+          () => ops.workspace.commit([
+            { path: "dup.json", data: { v: 1 } },
+            { path: "dup.json", delete: true },
+          ]),
+          "validation",
+          "committing one path twice",
+        );
+        // An empty commit has no single right answer — a commit id and a trail
+        // entry for a change nobody made, or silence — so it is refused rather
+        // than each implementation picking one. (`read([])` is the opposite
+        // case, and answers `{}`: reading nothing has exactly one answer.)
+        await assertThrowsCode(
+          () => ops.workspace.commit([]),
+          "validation",
+          "committing no entries at all",
+        );
+        assertDeepEqual(
+          await ops.workspace.read(["dup.json"]),
+          {},
+          "the refused commit wrote its first entry anyway",
+        );
+      }),
+
+      /** The guard's third state. A colleague who opened the mount before the
+          file existed checked out NOTHING, so their base is `null`, not a
+          number — and a backend that only understands numbers drops the guard
+          on exactly the write that creates the shared file, which is where two
+          colleagues collide most. */
+      opsCase(opts, "workspace.commit refuses a create under expectedRevision null when the path exists", async (ops) => {
+        // Nothing there yet: the create-only guard is satisfied and lands.
+        await ops.workspace.commit([
+          { path: "create-cas.json", data: { by: "first" }, expectedRevision: null },
+        ]);
+        assertDeepEqual(
+          (await ops.workspace.read(["create-cas.json"]))["create-cas.json"],
+          { by: "first" },
+          "a create against an absent path did not land",
+        );
+
+        // The second creator read nothing either, and must lose rather than
+        // overwrite the file that appeared under them.
+        await assertThrowsCode(
+          () => ops.workspace.commit([
+            { path: "create-cas.json", data: { by: "second" }, expectedRevision: null },
+            { path: "create-cas-other.json", data: { by: "second" } },
+          ]),
+          "conflict",
+          "creating a path that another caller already created",
+        );
+        assertDeepEqual(
+          (await ops.workspace.read(["create-cas.json"]))["create-cas.json"],
+          { by: "first" },
+          "the refused create overwrote the first creator's file",
+        );
+        assert(
+          !("create-cas-other.json" in await ops.workspace.read(["create-cas-other.json"])),
+          "the refused commit applied its non-conflicting entry anyway",
+        );
+      }),
+
+      // =====================================================================
+      // lifecycle
+      // =====================================================================
+
+      opsCase(opts, "lifecycle.erase removes one subject's records, threads, harness state, and connector tokens", async (ops) => {
+        await ops.engine.put("vendo_parked_call", { id: "gone", data: {}, refs: { subject: "erase_me" } });
+        await ops.engine.put("vendo_parked_call", { id: "keep", data: {}, refs: { subject: "other" } });
+        await ops.transcripts.putThread({ id: "thr_erase", subject: "erase_me", messages: [] });
+        await ops.transcripts.putThread({ id: "thr_keep", subject: "other", messages: [] });
+        await ops.harness.set("thr_erase", "erase_me", { v: 1 });
+        await ops.harness.set("thr_keep", "other", { v: 1 });
+        // A tenant connector's vault name CARRIES the org that owns it, so the
+        // subject axis reaches the live credential and not only the rows that
+        // point at it. The host's own config is name-keyed and belongs to the
+        // deployment, so an erase must leave it armed — the pair is what tells a
+        // targeted sweep from a blanket DELETE that also passes the first half.
+        await ops.secrets.set(tenantConnectorSecret("erase_me", "github"), "dummy-token");
+        await ops.secrets.set("conf_host_token", "dummy-host-token");
+
+        const report = await ops.lifecycle.erase({ subject: "erase_me" });
+        assert(report !== null && report !== undefined, "erase must return a report");
+        assert(await ops.engine.get("vendo_parked_call", "gone") === null, "erase left the subject's record behind");
+        assert(await ops.engine.get("vendo_parked_call", "keep") !== null, "erase removed another subject's record");
+        assert(await ops.transcripts.getThread("thr_erase") === null, "erase left the subject's thread behind");
+        assert(await ops.transcripts.getThread("thr_keep") !== null, "erase removed another subject's thread");
+        assert(await ops.harness.get("thr_erase", "erase_me") === null, "erase left the subject's harness state behind");
+        assertDeepEqual(await ops.harness.get("thr_keep", "other"), { v: 1 }, "erase took another subject's harness state");
+        assert(await ops.secrets.get(tenantConnectorSecret("erase_me", "github")) === null, "erase left the subject's connector token in the vault");
+        assert(await ops.secrets.get("conf_host_token") === "dummy-host-token", "erase disarmed the host's own secret");
+      }),
+
+      /** The erase target's OTHER half. `EraseTarget` is a union of exactly two
+          scopes (store.ts) and only the subject one was ever proven, so an
+          implementation could serve `{subject}` faithfully and treat `{appId}`
+          as a no-op that answers with a report — an uninstalled app whose data
+          is all still there, and a deletion request answered with a receipt.
+          Scoped to the app and nothing else: the user who installed it keeps
+          their conversations, and the app NEXT to it keeps everything.
+
+          WHAT "the app's data" MEANS HERE, said plainly so this name never
+          over-claims again: the rows this SURFACE can see. Since the storage
+          rebuild an app's own data is a SQL database of its own, which no op on
+          `StoreOps` can read or write — so no case here can prove it, and one
+          that pretended to would be a test agreeing with a bug. Its cascade leg
+          is `EraseAppSql` in @vendoai/store's erase.ts, proven at the seam (real
+          write path in, real read path out, nothing stubbed) by
+          `store/tests/erase-app-database.seam.test.ts`. When the app-data family
+          lived in `vendo_records`/`vendo_blobs` this case DID cover it, and the
+          assertions went with the family — that gap is what the seam test now
+          holds. */
+      opsCase(opts, "lifecycle.erase removes one app's data, and only that app's", async (ops) => {
+        await seedApp(ops, "app_gone");
+        await seedApp(ops, "app_stays");
+        await ops.engine.put(engineAppHistory("app_gone"), { id: "ver_1", data: { version: 1 } });
+        await ops.transcripts.putThread({ id: "thr_app_erase", subject: "user_1", messages: [] });
+        await ops.harness.set("thr_app_erase", "user_1", { v: 1 });
+
+        const report = await ops.lifecycle.erase({ appId: "app_gone" });
+        assert(report !== null && report !== undefined, "erase must return a report");
+
+        assert(await ops.engine.get(engineAppHistory("app_gone"), "ver_1") === null, "erase left the app's history behind");
+        assert(await ops.engine.get("vendo_apps", "app_gone") === null, "erase left the app record itself behind");
+
+        assert(await ops.engine.get("vendo_apps", "app_stays") !== null, "erase took the neighbouring app record");
+        // The person is not the app: uninstalling one keeps their conversations
+        // — and with them the harness continuity that lives on the thread row.
+        // An app-scoped erase reaches no bookmark at all now; a bookmark belongs
+        // to a conversation, and uninstalling an app ends no conversation.
+        assert(await ops.transcripts.getThread("thr_app_erase") !== null, "an app-scoped erase took the user's threads");
+        assertDeepEqual(await ops.harness.get("thr_app_erase", "user_1"), { v: 1 }, "an app-scoped erase took a thread's harness state");
+      }),
+
+      /** Promote hands the app to an org: the app record's owning subject
+          BECOMES the org id (02-store §9.5), which is the move's only
+          observable through the ops surface. */
+      opsCase(opts, "lifecycle.promote hands the app record to the org; an unknown app is not-found", async (ops) => {
+        // A SHAPE-VALID app record: vendo_apps is a typed door, and a real
+        // backend refuses data that does not parse as {subject, enabled, doc}.
+        await ops.engine.put("vendo_apps", {
+          id: "app_promote",
+          data: {
+            subject: "user_1",
+            enabled: true,
+            doc: { format: "vendo/app@1", id: "app_promote", name: "Promoted" },
+          },
+          refs: { subject: "user_1" },
+        });
+        await ops.lifecycle.promote("app_promote", "org_1");
+        const promoted = await ops.engine.get("vendo_apps", "app_promote");
+        assert(
+          promoted?.refs?.["subject"] === "org_1",
+          `promote should hand the app to the org, got subject ${String(promoted?.refs?.["subject"])}`,
+        );
+        await assertThrowsCode(() => ops.lifecycle.promote("app_absent", "org_1"), "not-found", "promoting an unknown app");
+      }),
+
+      /** The batch append: ownership is the caller's `subject`, so the mount
+          checks it in its own statement and the client never downloads the
+          thread to check it first. OPTIONAL — a mount that omits it is served
+          by putMessage — so this case reports the omission rather than failing
+          it, and rather than passing, which is what an early `return` did. */
+      opsCase(opts, "transcripts.appendMessages lands a batch under the named subject", async (ops) => {
+        const append = ops.transcripts.appendMessages;
+        if (append === undefined) return omitted(APPEND_ABSENT);
+        await ops.transcripts.putThread({ id: "thr_am1", subject: "u", messages: [] });
+        const landed = await append("thr_am1", "u", [
+          { id: "msg_a", role: "user", text: "one" },
+          { id: "msg_b", role: "assistant", text: "two" },
+        ], { title: "one" });
+        assert(landed.count === 2, `appendMessages should report 2 rows, got ${landed.count}`);
+        assert(typeof landed.revision === "string", "appendMessages should report the thread's new revision");
+        // The answer is the revision and the count — NOT the thread. Echoing the
+        // transcript back is the payload this op exists to stop paying.
+        assertDeepEqual(Object.keys(landed).sort(), ["count", "revision"], "appendMessages answered with more than {revision, count}");
+
+        const got = await ops.transcripts.getThread("thr_am1");
+        const messages = (got!.data as Record<string, unknown>)["messages"] as unknown[];
+        assert(messages.length === 2, `appendMessages did not land both messages: got ${messages.length}`);
+
+        // A foreign subject is refused by the statement, not by a pre-check.
+        await ops.transcripts.putThread({ id: "thr_am2", subject: "owner", messages: [] });
+        await assertThrowsCode(
+          () => append("thr_am2", "someone_else", [{ id: "msg_x", role: "user", text: "not mine" }]),
+          "conflict",
+          "appending to another subject's thread",
+        );
+      }),
+
+      /** ORDER is the whole of what a transcript is: the same messages in a
+          different order are a different conversation, and the next turn reads
+          them back as its own context. A batch lands AFTER what the thread
+          already holds, in the order the caller wrote it — not sorted by id,
+          not by arrival, and not interleaved with the tail. */
+      opsCase(opts, "transcripts.appendMessages lands a batch after the tail, in the caller's order", async (ops) => {
+        const append = ops.transcripts.appendMessages;
+        if (append === undefined) return omitted(APPEND_ABSENT);
+        await ops.transcripts.putThread({ id: "thr_order", subject: "u", messages: [] });
+        // Ids that sort the OPPOSITE way to the order they are written in, so an
+        // implementation ordering by id cannot pass by coincidence.
+        await append("thr_order", "u", [{ id: "m_9", role: "user", text: "one" }, { id: "m_7", role: "assistant", text: "two" }]);
+        await append("thr_order", "u", [{ id: "m_5", role: "user", text: "three" }, { id: "m_3", role: "assistant", text: "four" }]);
+        const got = await ops.transcripts.getThread("thr_order");
+        assertDeepEqual(
+          ((got!.data as Record<string, unknown>)["messages"] as Array<Record<string, unknown>>).map((message) => message["text"]),
+          ["one", "two", "three", "four"],
+          "the batches did not land after the tail in the order they were written",
+        );
+      }),
+
+      /** An id the thread already holds is an EDIT, in place — the same rule
+          putMessage follows, and for the same reason: an approval flips from
+          pending to answered by re-sending its own message, and a thread
+          carrying two messages under one id is a thread no engine will store.
+          The edited message keeps its DECIDED position: moving it to the tail
+          would reorder the conversation every time a turn re-sent anything. */
+      opsCase(opts, "transcripts.appendMessages edits an id the thread already holds, without moving it", async (ops) => {
+        const append = ops.transcripts.appendMessages;
+        if (append === undefined) return omitted(APPEND_ABSENT);
+        await ops.transcripts.putThread({ id: "thr_dedupe", subject: "u", messages: [] });
+        await append("thr_dedupe", "u", [
+          { id: "m_a", role: "user", text: "ask" },
+          { id: "m_b", role: "assistant", text: "answer" },
+        ]);
+        await append("thr_dedupe", "u", [
+          { id: "m_a", role: "user", text: "ask (edited)" },
+          { id: "m_c", role: "user", text: "next" },
+        ]);
+        const got = await ops.transcripts.getThread("thr_dedupe");
+        assertDeepEqual(
+          ((got!.data as Record<string, unknown>)["messages"] as Array<Record<string, unknown>>)
+            .map((message) => [message["id"], message["text"]]),
+          [["m_a", "ask (edited)"], ["m_b", "answer"], ["m_c", "next"]],
+          "the re-sent message was appended again, or moved, instead of edited in place",
+        );
+      }),
+
+      /** Two refusals the batch shape makes possible and the single-message verb
+          never could. Both are `validation` because both are the CALLER's
+          mistake, caught before a row is written: an empty batch has nothing to
+          land (and must not touch the thread on its way to doing nothing), and
+          two messages sharing one id cannot both be stored — an implementation
+          that upserts a batch in one statement loses the WHOLE write to a
+          duplicate-key error, so the offender is named instead. */
+      opsCase(opts, "transcripts.appendMessages refuses an empty batch and two messages under one id", async (ops) => {
+        const append = ops.transcripts.appendMessages;
+        if (append === undefined) return omitted(APPEND_ABSENT);
+        await ops.transcripts.putThread({ id: "thr_refuse", subject: "u", messages: [] });
+        const before = await ops.transcripts.getThread("thr_refuse");
+
+        await assertThrowsCode(() => append("thr_refuse", "u", []), "validation", "an empty batch");
+        await assertThrowsCode(
+          () => append("thr_refuse", "u", [{ id: "m_dup", role: "user", text: "one" }, { id: "m_dup", role: "user", text: "two" }]),
+          "validation",
+          "two messages sharing one id",
+        );
+        const after = await ops.transcripts.getThread("thr_refuse");
+        assertDeepEqual(
+          (after!.data as Record<string, unknown>)["messages"],
+          (before!.data as Record<string, unknown>)["messages"],
+          "a refused batch changed the thread anyway",
+        );
+      }),
+
+      /** A thread the store has never seen is CREATED, under the subject the
+          batch names — the upsert that lets a harness land turn one without a
+          separate putThread, and the reason the op takes a subject rather than
+          reading one. It is also the branch where getting ownership wrong costs
+          the most: a create that ignored the named subject would hand the new
+          thread to nobody, and every later append to it would then conflict. */
+      opsCase(opts, "transcripts.appendMessages creates a thread that does not exist yet, under the named subject", async (ops) => {
+        const append = ops.transcripts.appendMessages;
+        if (append === undefined) return omitted(APPEND_ABSENT);
+        const landed = await append("thr_new", "owner_1", [{ id: "m_1", role: "user", text: "first" }], { title: "First" });
+        assert(landed.count === 1, `the creating append should report 1 row, got ${landed.count}`);
+
+        const created = await ops.transcripts.getThread("thr_new");
+        assert(created !== null, "the append did not create the thread it named");
+        assert((created!.data as Record<string, unknown>)["subject"] === "owner_1", "the created thread was not handed to the named subject");
+        assertDeepEqual(
+          (await ops.transcripts.listThreads({ subject: "owner_1" })).records.map((record) => record.id),
+          ["thr_new"],
+          "the created thread is missing from its subject's listing",
+        );
+        // And the ownership it was created with holds against everyone else.
+        await assertThrowsCode(
+          () => append("thr_new", "someone_else", [{ id: "m_2", role: "user", text: "mine now" }]),
+          "conflict",
+          "appending to a thread another subject created",
+        );
+      }),
+
+      /** The revision is the ONLY thing a batch append hands back about the
+          thread, and a client caches it to decide whether its copy is stale. A
+          constant — or a value that repeats across two appends — tells every
+          holder of the old one that nothing changed, so the transcript they
+          keep serving is the one from before the turn. Nothing here reads the
+          revision's SPELLING: it is contractually an opaque string, and the two
+          shipped engines number and stamp theirs differently. */
+      opsCase(opts, "transcripts.appendMessages reports a revision that moves with every batch", async (ops) => {
+        const append = ops.transcripts.appendMessages;
+        if (append === undefined) return omitted(APPEND_ABSENT);
+        await ops.transcripts.putThread({ id: "thr_rev", subject: "u", messages: [] });
+        const seen: string[] = [];
+        for (const index of [0, 1, 2]) {
+          const landed = await append("thr_rev", "u", [{ id: `m_${index}`, role: "user", text: String(index) }]);
+          assert(typeof landed.revision === "string" && landed.revision.length > 0, "an append reported no revision");
+          assert(!seen.includes(landed.revision), `append ${index} reported a revision an earlier one already used: ${landed.revision}`);
+          seen.push(landed.revision);
+        }
+        // An EDIT is a change too — the thread a client holds is stale after it.
+        const edited = await append("thr_rev", "u", [{ id: "m_0", role: "user", text: "edited" }]);
+        assert(!seen.includes(edited.revision), `an edit reported a revision an earlier append already used: ${edited.revision}`);
+      }),
+
+      // =====================================================================
+      // audit
+      // =====================================================================
+
+      /** The reviewer's feed and the decision tally, which are the only two
+          reasons this door exists at all: three of its four filters are not
+          refs (`venue` is a column, `outcome` and `decidedBy` live inside the
+          event), so `engine.list`'s ref filter cannot express any of them. */
+      opsCase(opts, "audit.list narrows by each of its four filters and ANDs them together", async (ops) => {
+        await seedAudit(ops, [
+          auditEvent("aud_c1", 1, { kind: "tool-call", venue: "chat", outcome: "ok", decidedBy: "grant" }),
+          auditEvent("aud_c2", 2, { kind: "approval", venue: "app", outcome: "blocked", decidedBy: "denied" }),
+          auditEvent("aud_c3", 3, { kind: "tool-call", venue: "app", outcome: "ok", decidedBy: "rule" }),
+          auditEvent("aud_c4", 4, { kind: "policy-decision", venue: "chat", outcome: "error", decidedBy: "judge" }),
+          auditEvent("aud_c5", 5, { kind: "tool-call", venue: "chat", outcome: "blocked", decidedBy: "grant" }),
+        ]);
+        const idsOf = async (query?: AuditQuery): Promise<string[]> =>
+          (await ops.audit.list(query)).events.map((event) => event.id);
+
+        // No filter is the whole drawer, newest first — an empty query is the
+        // feed, not an empty answer.
+        assertDeepEqual(await idsOf(), ["aud_c5", "aud_c4", "aud_c3", "aud_c2", "aud_c1"], "an unfiltered audit.list is the whole drawer, newest first");
+        assertDeepEqual(await idsOf({ kind: "tool-call" }), ["aud_c5", "aud_c3", "aud_c1"], "the kind filter returned the wrong rows");
+        assertDeepEqual(await idsOf({ venue: "app" }), ["aud_c3", "aud_c2"], "the venue filter returned the wrong rows");
+        assertDeepEqual(await idsOf({ outcome: "blocked" }), ["aud_c5", "aud_c2"], "the outcome filter returned the wrong rows");
+        assertDeepEqual(await idsOf({ decidedBy: "grant" }), ["aud_c5", "aud_c1"], "the decidedBy filter returned the wrong rows");
+
+        // ANDed, never ORed: each of these pairs drops rows that either filter
+        // alone keeps, which an OR could not do.
+        assertDeepEqual(await idsOf({ kind: "tool-call", venue: "app" }), ["aud_c3"], "two filters did not AND");
+        assertDeepEqual(
+          await idsOf({ kind: "tool-call", venue: "chat", outcome: "blocked", decidedBy: "grant" }),
+          ["aud_c5"],
+          "all four filters did not AND",
+        );
+      }),
+
+      opsCase(opts, "audit.list walks its cursor without loss or duplicates", async (ops) => {
+        const ids = ["aud_p1", "aud_p2", "aud_p3", "aud_p4", "aud_p5"];
+        await seedAudit(ops, ids.map((id, index) => auditEvent(id, index + 1, {})));
+        await assertPaginates("audit.list", ids, async (cursor) => {
+          const page = await ops.audit.list({ limit: PAGE, cursor });
+          return { ids: page.events.map((event) => event.id), cursor: page.cursor };
+        });
+      }),
+
+      /** TWO DOORS, ONE DRAWER — the case that matters more than the filters.
+          `audit.list()` and `engine.list("vendo_audit")` read the same rows on
+          the same keyset order, and nothing in an implementation forces that: a
+          typed door sorting on the event's own `at` and a generic one sorting
+          on the row's arrival agree until the two differ, and then a reviewer's
+          feed and the drawer the erase cascade sweeps stop describing the same
+          history. Two doors that are allowed to disagree will. */
+      opsCase(opts, "audit.list and engine.list read one drawer in one order", async (ops) => {
+        await seedAudit(ops, [
+          auditEvent("aud_d1", 1, { kind: "tool-call", outcome: "ok", decidedBy: "grant" }),
+          auditEvent("aud_d2", 2, { kind: "approval", venue: "app", outcome: "pending-approval" }),
+          auditEvent("aud_d3", 3, { kind: "run", venue: "automation", outcome: "error" }),
+        ]);
+        const typed = (await ops.audit.list()).events;
+        const generic = (await ops.engine.list("vendo_audit")).records;
+        assertDeepEqual(
+          typed.map((event) => event.id),
+          generic.map((record) => record.id),
+          "the two doors over vendo_audit returned different rows or a different order",
+        );
+        assertDeepEqual(
+          typed,
+          generic.map((record) => record.data),
+          "the typed door returned events the drawer does not hold",
+        );
+      }),
+
+      /** The decision tally: the same drawer, the same four filters, collapsed
+          to counts per UTC hour. Three assertions and not one deep-equal on
+          purpose — the three ways a group-by goes wrong (a bucket that never
+          arrives, a group labelled with the wrong dimension, a count that is
+          off) are three different bugs, and a case that reports them with one
+          message tells whoever it caught nothing about which. */
+      opsCase(opts, "audit.tally counts events per UTC hour, split by outcome and decidedBy", async (ops) => {
+        await seedAudit(ops, [
+          // Before the floor — and the floor is INCLUSIVE, so only this one is
+          // out of the window.
+          auditEvent("aud_t0", -30, { outcome: "ok", decidedBy: "grant" }),
+          auditEvent("aud_t1", 0, { outcome: "ok", decidedBy: "grant" }),
+          auditEvent("aud_t2", 20, { outcome: "ok", decidedBy: "grant" }),
+          auditEvent("aud_t3", 40, { outcome: "blocked", decidedBy: "denied" }),
+          auditEvent("aud_t4", 70, { outcome: "ok", decidedBy: "grant" }),
+          // A control event: not a call, so it carries neither dimension. Its
+          // group is `null`/`null` — never dropped, never merged into another.
+          auditEvent("aud_t5", 80, { kind: "policy-decision" }),
+        ]);
+        const from = new Date(Date.UTC(2026, 0, 1, 0, 0)).toISOString() as IsoDateTime;
+        const rows = await ops.audit.tally({ from });
+
+        // Ascending by bucket, one row per (hour, outcome, decidedBy) group that
+        // has events in it — and hours with none are omitted, not zero-filled.
+        assertDeepEqual(
+          rows.map((row) => row.bucket),
+          ["2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z", "2026-01-01T01:00:00.000Z", "2026-01-01T01:00:00.000Z"],
+          "the tally's buckets are not the window's UTC hours, ascending",
+        );
+        // Sorted by outcome then decidedBy inside a bucket, with an absent
+        // dimension LAST.
+        assertDeepEqual(
+          rows.map((row) => `${row.outcome ?? "-"}/${row.decidedBy ?? "-"}`),
+          ["blocked/denied", "ok/grant", "ok/grant", "-/-"],
+          "the tally labelled a group with the wrong outcome or decidedBy, or ordered the groups differently",
+        );
+        assertDeepEqual(
+          rows.map((row) => row.count),
+          [1, 2, 1, 1],
+          "the tally counted the wrong number of events in a group",
+        );
+      }),
+
+      /** ONE WHERE, TWO DOORS — the case that matters more than the arithmetic.
+          A tally is only ever read next to the feed it summarises, so the two
+          have to narrow identically: nothing in an implementation forces a
+          grouped statement's filters to match a paged one's, and a tally that
+          counts rows the feed does not show (or misses rows it does) is a
+          number a reviewer cannot reconcile with what is on the screen. */
+      opsCase(opts, "audit.tally narrows on the same four filters as audit.list, ANDed", async (ops) => {
+        await seedAudit(ops, [
+          auditEvent("aud_f1", 1, { kind: "tool-call", venue: "chat", outcome: "ok", decidedBy: "grant" }),
+          auditEvent("aud_f2", 2, { kind: "approval", venue: "app", outcome: "blocked", decidedBy: "denied" }),
+          auditEvent("aud_f3", 3, { kind: "tool-call", venue: "app", outcome: "ok", decidedBy: "rule" }),
+          auditEvent("aud_f4", 4, { kind: "tool-call", venue: "chat", outcome: "blocked", decidedBy: "grant" }),
+        ]);
+        const from = new Date(Date.UTC(2026, 0, 1, 0, 0)).toISOString() as IsoDateTime;
+        const counted = async (filters: AuditQuery): Promise<number> =>
+          (await ops.audit.tally({ ...filters, from })).reduce((total, row) => total + row.count, 0);
+        const listed = async (filters: AuditQuery): Promise<number> =>
+          (await ops.audit.list(filters)).events.length;
+
+        for (const filters of [
+          {},
+          { kind: "tool-call" },
+          { venue: "app" },
+          { outcome: "ok" },
+          { decidedBy: "grant" },
+          // ANDed, never ORed: this pair drops rows either filter alone keeps.
+          { kind: "tool-call", venue: "chat" },
+          { kind: "tool-call", venue: "chat", outcome: "blocked", decidedBy: "grant" },
+        ] satisfies AuditQuery[]) {
+          const total = await counted(filters);
+          const shown = await listed(filters);
+          assert(
+            total === shown,
+            `the tally counted ${total} events where the feed shows ${shown} for ${JSON.stringify(filters)}`,
+          );
+          assert(total > 0, `the case's own fixture makes ${JSON.stringify(filters)} match nothing, so it proves nothing`);
+        }
+      }),
+
+      // =====================================================================
+      // secrets
+      // =====================================================================
+
+      /** The vault a host's connectors authenticate out of. `get` answering
+          NULL for a name nobody set — not undefined, not a throw — is what lets
+          a boot path ask "is this connector configured yet" without wrapping
+          the call; a throw there turns an unconfigured connector into a crash. */
+      opsCase(opts, "secrets round-trip, overwrite in place, and answer null for a name nobody set", async (ops) => {
+        assert(await ops.secrets.get("conf_absent") === null, "a name nobody set must read as null");
+        await ops.secrets.set("conf_token", "value_1");
+        assert(await ops.secrets.get("conf_token") === "value_1", "the stored secret did not round-trip");
+        await ops.secrets.set("conf_token", "value_2");
+        assert(await ops.secrets.get("conf_token") === "value_2", "set on a name already held did not overwrite it");
+      }),
+
+      /** `list` is the vault's inventory, and it is SORTED: "the order they
+          happened to be written in" is not an answer two implementations would
+          ever give alike, and an operator reading a rotation list needs the
+          same order twice. */
+      opsCase(opts, "secrets.list holds exactly the live names, sorted, and delete removes one", async (ops) => {
+        for (const name of ["conf_b", "conf_a", "conf_c"]) await ops.secrets.set(name, `value_of_${name}`);
+        assertDeepEqual(await ops.secrets.list(), ["conf_a", "conf_b", "conf_c"], "list is not the live names in sorted order");
+        await ops.secrets.delete("conf_b");
+        assertDeepEqual(await ops.secrets.list(), ["conf_a", "conf_c"], "a deleted name stayed in the inventory");
+        assert(await ops.secrets.get("conf_b") === null, "a deleted secret remained readable");
+      }),
+
+      // =====================================================================
+      // footprint
+      // =====================================================================
+
+      /** What is in the drawers, per collection, with each collection's kind
+          alongside — and the kind is the reason the op is shaped this way: a
+          footprint that cannot tell a retrieval corpus from an ordinary drawer
+          cannot answer "what is the index costing me".
+          Nothing here asserts a byte COUNT. `bytes` is an estimate of row
+          content that each engine measures its own way, and a case pinning a
+          number would fail every honest implementation but the one it was
+          written against. */
+      opsCase(opts, "footprint reports a shape-valid entry per non-empty collection, with its kind", async (ops) => {
+        await ops.engine.put("vendo_workspace_commits", { id: "fp_1", data: { note: "x".repeat(64) } });
+        await ops.engine.put("vendo_knowledge_docs", { id: "fp_doc_1", data: { text: "y".repeat(64) } });
+        const footprint = await ops.footprint();
+        for (const entry of footprint) {
+          assert(typeof entry.collection === "string" && entry.collection.length > 0, `a footprint entry has no collection name: ${JSON.stringify(entry)}`);
+          assert(entry.kind === "storage" || entry.kind === "knowledge", `${entry.collection} reported the kind ${JSON.stringify(entry.kind)}`);
+          assert(
+            typeof entry.bytes === "number" && Number.isFinite(entry.bytes) && entry.bytes >= 0,
+            `${entry.collection} reported bytes ${String(entry.bytes)}`,
+          );
+        }
+        const entryFor = (collection: string): CollectionFootprint | undefined =>
+          footprint.find((entry) => entry.collection === collection);
+        assert(entryFor("vendo_workspace_commits")?.kind === "storage", "a storage collection holding rows is missing from the footprint");
+        assert(entryFor("vendo_knowledge_docs")?.kind === "knowledge", "the retrieval corpus was counted as ordinary storage");
+        assert(
+          footprint.length === new Set(footprint.map((entry) => entry.collection)).size,
+          "a collection was reported more than once",
+        );
+      }),
+
+      /** MONOTONIC, not exact: rows going in may only push the number up, which
+          is the whole of what makes two footprints comparable. `>=` and not `>`
+          on purpose — a byte accounting is allowed to be page-granular or
+          otherwise coarse, and pinning strict growth would fail an engine that
+          is telling the truth about a page it had already allocated. */
+      opsCase(opts, "footprint bytes never decrease as a collection grows", async (ops) => {
+        const collection = engineAppHistory("conf_fp");
+        const bytesOf = async (): Promise<number> =>
+          (await ops.footprint()).find((entry) => entry.collection === collection)?.bytes ?? -1;
+        await ops.engine.put(collection, { id: "fp_seed", data: { note: "a".repeat(64) } });
+        const before = await bytesOf();
+        assert(before >= 0, "a collection holding rows was left out of the footprint");
+        for (let index = 0; index < 10; index += 1) {
+          await ops.engine.put(collection, { id: `fp_more_${index}`, data: { note: "b".repeat(512) } });
+        }
+        const after = await bytesOf();
+        assert(after >= before, `the footprint shrank as rows were added: ${after} < ${before}`);
+      }),
+
+      // =====================================================================
+      // retention — OPTIONAL (01 §12), so both cases report the OMISSION on a
+      // mount that leaves the family off rather than failing it. That is what
+      // lets every mount carry them; an implementation that HAS the family is
+      // held to all of it. Reported rather than returned silently, because an
+      // early `return` counted as a pass — and "this engine has nowhere to
+      // quarantine to" then read exactly like "this engine's sweep is correct".
+      // =====================================================================
+
+      /** The sweep is a cron, so the two things that matter are the count it
+          reports and its behavior on the second pass. The window is expressed
+          by moving the CUTOFF rather than the rows' age, because a case can
+          only write rows now: a cutoff older than every row covers them all and
+          must move nothing. */
+      opsCase(opts, "retention.quarantine lifts rows past the cutoff out of the live collection, and re-running it moves nothing", async (ops) => {
+        const retention = ops.retention;
+        if (retention === undefined) return omitted(RETENTION_ABSENT);
+        const collection = engineAppHistory("conf_ret");
+        const ids = ["ret_1", "ret_2", "ret_3"];
+        for (const id of ids) await ops.engine.put(collection, { id, data: { id } });
+
+        const inWindow = await retention.quarantine(collection, new Date(0).toISOString() as IsoDateTime);
+        assert(inWindow.moved === 0, `a cutoff older than every row should move nothing, moved ${inWindow.moved}`);
+        assert(
+          (await ops.engine.list(collection)).records.length === ids.length,
+          "a quarantine that moved nothing still took rows out of the live collection",
+        );
+
+        const cutoff = new Date(Date.now() + 60_000).toISOString() as IsoDateTime;
+        const swept = await retention.quarantine(collection, cutoff);
+        assert(swept.moved === ids.length, `quarantine should report the ${ids.length} rows it moved, reported ${swept.moved}`);
+        assertDeepEqual(
+          (await ops.engine.list(collection)).records.map((record) => record.id),
+          [],
+          "quarantined rows stayed in the live collection",
+        );
+        assert(await ops.engine.get(collection, "ret_1") === null, "a quarantined row is still readable through the live door");
+
+        const again = await retention.quarantine(collection, cutoff);
+        assert(again.moved === 0, `a second quarantine at the same cutoff should move nothing, moved ${again.moved}`);
+      }),
+
+      /** The gap between the two verbs IS the feature, and the purge count is
+          the only place it is observable: the engine owns the quarantine and no
+          caller may name it, so "still recoverable" can only be read as a purge
+          that declines to destroy. The cutoff is on the QUARANTINE time, not
+          the row's age — the grace a purge honors runs from the lift. */
+      opsCase(opts, "retention.purge destroys only quarantined rows lifted before its cutoff", async (ops) => {
+        const retention = ops.retention;
+        if (retention === undefined) return omitted(RETENTION_ABSENT);
+        const collection = engineAppHistory("conf_purge");
+        const ids = ["purge_1", "purge_2"];
+        for (const id of ids) await ops.engine.put(collection, { id, data: { id } });
+        const lifted = await retention.quarantine(collection, new Date(Date.now() + 60_000).toISOString() as IsoDateTime);
+        assert(lifted.moved === ids.length, `the sweep should have lifted ${ids.length} rows, lifted ${lifted.moved}`);
+
+        const early = await retention.purge(collection, new Date(0).toISOString() as IsoDateTime);
+        assert(early.purged === 0, `a purge cutoff predating the sweep should destroy nothing, destroyed ${early.purged}`);
+
+        const past = new Date(Date.now() + 60_000).toISOString() as IsoDateTime;
+        const destroyed = await retention.purge(collection, past);
+        assert(destroyed.purged === ids.length, `the purge should report the ${ids.length} rows it destroyed, reported ${destroyed.purged}`);
+        const again = await retention.purge(collection, past);
+        assert(again.purged === 0, `a second purge reported ${again.purged} rows a first one had already destroyed`);
+      }),
+
+      // =====================================================================
+      // usage — OPTIONAL (01 §12) on `retention`'s rule, and reported the same
+      // way: a store with nowhere to meter says so by omitting the family, and
+      // a case that returned early instead would make "this mount has no meter"
+      // and "this mount's meter is correct" one green line.
+      // =====================================================================
+
+      /** The meter's whole job: what went in comes back as a number, for the
+          window the caller drew and no other. The EDGES are the load-bearing
+          half — `since` inclusive and `until` exclusive is what lets two
+          adjacent periods tile a timeline without counting the instant they
+          share twice or dropping it. */
+      opsCase(opts, "usage.count answers one subject's window, taking since inclusively and until exclusively", async (ops) => {
+        const usage = ops.usage;
+        if (usage === undefined) return omitted(USAGE_ABSENT);
+        const at = (minute: number): Date => new Date(Date.UTC(2026, 0, 1, 12, minute));
+        const counts = async (query: UsageCountQuery, expected: number, why: string): Promise<void> => {
+          const actual = await usage.count(query);
+          assert(actual === expected, `${why}: expected ${expected}, counted ${actual}`);
+        };
+        for (const minute of [0, 1, 2]) await usage.record({ subject: "conf_meter", action: "message", at: at(minute) });
+        await usage.record({ subject: "conf_meter", action: "generation", at: at(1) });
+        await usage.record({ subject: "conf_meter_neighbour", action: "message", at: at(1) });
+
+        const mine = { subject: "conf_meter", action: "message" } as const;
+        await counts({ ...mine, since: at(0) }, 3, "a window over every recorded action should count them all");
+        await counts({ ...mine, since: at(1) }, 2, "`since` is inclusive, so an action AT the floor is inside the window");
+        await counts({ ...mine, since: at(0), until: at(2) }, 2, "`until` is exclusive, so an action AT the ceiling is outside the window");
+        await counts({ ...mine, since: at(1), until: at(1) }, 0, "an empty window counts nothing");
+        await counts({ ...mine, since: at(3) }, 0, "a window past every action counts nothing");
+        // Both narrowings hold: neither another action nor another person's
+        // usage may land in a number a policy is about to decide on.
+        await counts({ subject: "conf_meter", action: "generation", since: at(0) }, 1, "the count is one action's, not the subject's whole meter");
+        await counts({ subject: "conf_meter_absent", action: "message", since: at(0) }, 0, "a subject who has done nothing counts zero");
+      }),
+
+      /** A pool count is the shared bucket's, and it is answered off the keys
+          the ROW carries — copied off the user when the action happened. That
+          is what keeps a departed member's usage counted against the team it
+          was spent in, and what stops a new member's history from arriving with
+          them. */
+      opsCase(opts, "usage.count answers a pool by the keys its rows were written with, never the member's own", async (ops) => {
+        const usage = ops.usage;
+        if (usage === undefined) return omitted(USAGE_ABSENT);
+        const since = new Date(Date.UTC(2026, 0, 1));
+        const at = new Date(Date.UTC(2026, 0, 2));
+        await usage.record({ subject: "conf_pool_a", action: "message", at, poolKeys: ["conf_team", "conf_org"] });
+        await usage.record({ subject: "conf_pool_b", action: "message", at, poolKeys: ["conf_org"] });
+        await usage.record({ subject: "conf_pool_c", action: "message", at });
+        const counted = async (poolKey: string): Promise<number> => await usage.count({ poolKey, action: "message", since });
+
+        assert(await counted("conf_org") === 2, `the org pool holds two members' actions, counted ${await counted("conf_org")}`);
+        assert(await counted("conf_team") === 1, `a row draws down EVERY key it carries, and only those it carries: counted ${await counted("conf_team")}`);
+        assert(await counted("conf_pool_a") === 0, "a subject is not a pool — a pool count matched a subject id");
+        assert(
+          await usage.count({ subject: "conf_pool_a", action: "message", since }) === 1,
+          "a subject's own count must not swell to the pool's",
+        );
+      }),
+
+      /** The operator's read: every subject's number over one window, in one
+          call rather than a count per user. Subjects with nothing in the window
+          are OMITTED, because a group-by answers with the groups that exist,
+          and the rows are sorted so two implementations answer alike. */
+      opsCase(opts, "usage.tally groups a window by subject and action, sorted, omitting what the window does not hold", async (ops) => {
+        const usage = ops.usage;
+        if (usage === undefined) return omitted(USAGE_ABSENT);
+        const at = (day: number): Date => new Date(Date.UTC(2026, 0, day));
+        await usage.record({ subject: "conf_tally_b", action: "message", at: at(2) });
+        await usage.record({ subject: "conf_tally_a", action: "message", at: at(2) });
+        await usage.record({ subject: "conf_tally_a", action: "message", at: at(3) });
+        await usage.record({ subject: "conf_tally_a", action: "generation", at: at(3) });
+
+        assertDeepEqual(
+          await usage.tally({ since: at(1) }),
+          [
+            { subject: "conf_tally_a", action: "generation", count: 1 },
+            { subject: "conf_tally_a", action: "message", count: 2 },
+            { subject: "conf_tally_b", action: "message", count: 1 },
+          ],
+          "the tally is one row per (subject, action) actually in the window, sorted by subject then action",
+        );
+        assertDeepEqual(
+          await usage.tally({ since: at(3) }),
+          [
+            { subject: "conf_tally_a", action: "generation", count: 1 },
+            { subject: "conf_tally_a", action: "message", count: 1 },
+          ],
+          "a narrower window still counted actions outside it, or kept a subject it no longer holds",
+        );
+        assertDeepEqual(
+          await usage.tally({ since: at(1), action: "generation" }),
+          [{ subject: "conf_tally_a", action: "generation", count: 1 }],
+          "narrowing to one action did not narrow the tally",
+        );
+        assertDeepEqual(
+          await usage.tally({ since: at(1), subject: "conf_tally_b" }),
+          [{ subject: "conf_tally_b", action: "message", count: 1 }],
+          "narrowing to one subject did not narrow the tally",
+        );
+      }),
+
+      // =====================================================================
+      // tenancy — OMITTED unless the mount hands out a second tenant, because
+      // a single-tenant store has no second tenant to hand out. Everything
+      // above proves one store keeps its OWNERS, apps and namespaces apart;
+      // this is the line above those, and it is the only one a store serving
+      // many customers out of one database can get catastrophically wrong.
+      // =====================================================================
+
+      /** Every drawer at once, in both directions. One case rather than six,
+          because the failure is never "threads leak but blobs do not" — it is
+          one missing predicate on a shared query path, and it shows up in
+          whichever drawer is asked first. The reverse direction is asserted
+          too: a leak that only runs one way is still a leak, and a store that
+          scopes its reads but not its writes lands one tenant's row in
+          another's drawer where the first tenant will never see it again. */
+      {
+        name: "a neighbouring tenant shares no drawer with this one",
+        async run(): Promise<void | ConformanceOmission> {
+          const makeNeighbour = opts.makeNeighbour;
+          if (makeNeighbour === undefined) {
+            return omitted("this mount serves one tenant, so it hands out no neighbour to be isolated from");
+          }
+          const made = await opts.makeOps();
+          const neighbour = await makeNeighbour(made.ops);
+          const [mine, theirs] = [made.ops, neighbour.ops];
+          try {
+            for (const [ops, whose] of [[mine, "mine"], [theirs, "theirs"]] as const) {
+              await ops.engine.put("vendo_placement_slots", { id: "slot_1", data: { whose } });
+              await ops.blobs.put("conf_tenant", "file.bin", new TextEncoder().encode(whose));
+              await ops.transcripts.putThread({ id: "thr_1", subject: "user_1", messages: [{ whose }] });
+              await ops.secrets.set("conf_token", whose);
+              await ops.workspace.commit([{ path: "w.json", data: { whose } }], { owner: "user_1" });
+            }
+
+            for (const [ops, whose] of [[mine, "mine"], [theirs, "theirs"]] as const) {
+              assertDeepEqual((await ops.engine.get("vendo_placement_slots", "slot_1"))?.data, { whose }, "a record crossed the tenant line");
+              assertDeepEqual(
+                (await ops.engine.list("vendo_placement_slots")).records.map((record) => record.data),
+                [{ whose }],
+                "a record listing crossed the tenant line",
+              );
+              assertBytesEqual(
+                (await ops.blobs.get("conf_tenant", "file.bin"))!.bytes,
+                new TextEncoder().encode(whose),
+                "a blob crossed the tenant line",
+              );
+              assertDeepEqual(
+                ((await ops.transcripts.getThread("thr_1"))!.data as Record<string, unknown>)["messages"],
+                [{ whose }],
+                "a thread crossed the tenant line",
+              );
+              assertDeepEqual(
+                (await ops.transcripts.listThreads({ subject: "user_1" })).records.map((record) => record.id),
+                ["thr_1"],
+                "a thread listing crossed the tenant line",
+              );
+              assert(await ops.secrets.get("conf_token") === whose, "a secret crossed the tenant line");
+              assertDeepEqual(await ops.secrets.list(), ["conf_token"], "the vault inventory crossed the tenant line");
+              assertDeepEqual(
+                (await ops.workspace.read(["w.json"], { owner: "user_1" }))["w.json"],
+                { whose },
+                "a workspace file crossed the tenant line",
+              );
+            }
+
+            // A destructive verb is the loudest way to cross: an erase that
+            // reaches the neighbour is unrecoverable, and it is the one call
+            // where a missing tenant predicate is worst.
+            await mine.lifecycle.erase({ subject: "user_1" });
+            assert(await theirs.transcripts.getThread("thr_1") !== null, "one tenant's erase took the neighbour's thread");
+          } finally {
+            await neighbour.close?.();
+            await made.close?.();
+          }
+        },
+      },
+
+      // =====================================================================
+      // turn
+      // =====================================================================
+
+      /** The envelope's WHOLE contract: each part is exactly what its own op
+          answers, so a turn that batches its opening reads reads the same store
+          it would have read one call at a time. OPTIONAL — a mount that omits
+          the family is served by those calls — so this reports the omission
+          rather than passing on absence. */
+      opsCase(opts, "turn.load answers exactly what the ops it bundles answer", async (ops) => {
+        const turn = ops.turn;
+        if (turn === undefined) return omitted(TURN_ABSENT);
+        await seedApp(ops, "app_turn");
+        await ops.transcripts.putThread({ id: "thr_turn", subject: "user_1", messages: [{ id: "m_1", text: "one" }] });
+        await ops.harness.set("thr_turn", "user_1", { step: 3 });
+        await ops.workspace.commit([{ path: "page.tsx", data: { code: "x" } }], { owner: "user_1" });
+
+        const loaded = await turn.load({
+          thread: { id: "thr_turn" },
+          index: { owner: "user_1" },
+          read: { paths: ["page.tsx"], owner: "user_1" },
+          harness: { threadId: "thr_turn", subject: "user_1" },
+        });
+        assertDeepEqual(loaded.thread, await ops.transcripts.getThread("thr_turn"), "turn.load's thread is not getThread's answer");
+        assertDeepEqual(loaded.index, await ops.workspace.index({ owner: "user_1" }), "turn.load's index is not workspace.index's answer");
+        assertDeepEqual(loaded.read, await ops.workspace.read(["page.tsx"], { owner: "user_1" }), "turn.load's read is not workspace.read's answer");
+        assertDeepEqual(loaded.harness, await ops.harness.get("thr_turn", "user_1"), "turn.load's harness is not harness.get's answer");
+        // Asking for less costs less: a part the request left out is absent from
+        // the answer, never a zero standing in for one.
+        assert(!("usage" in loaded), "turn.load answered a usage count nobody asked for");
+
+        // The shape EVERY `vendo()` turn sends: the thread and the index, no
+        // file bytes. A turn reads a file when a tool asks for one, so a
+        // required `read` would have it name a path it does not want.
+        const quiet = await turn.load({ thread: { id: "thr_turn" }, index: { owner: "user_1" } });
+        assertDeepEqual(quiet.index, loaded.index, "turn.load's index changed when the request dropped `read`");
+        assert(!("read" in quiet), "turn.load answered a workspace read nobody asked for");
+        assert(!("harness" in quiet), "turn.load answered harness state nobody asked for");
+      }),
+
+      /** The closing half, held to the same rule from the other side: every part
+          lands exactly where its own op would have landed it, and the answer is
+          the batch append's `{revision, count}` — never the thread. */
+      opsCase(opts, "turn.commit lands exactly what the ops it bundles land", async (ops) => {
+        const turn = ops.turn;
+        if (turn === undefined) return omitted(TURN_ABSENT);
+        await seedApp(ops, "app_commit");
+        const event = auditEvent("aud_turn", 0, {});
+        const landed = await turn.commit({
+          messages: { threadId: "thr_commit", subject: "user_1", messages: [{ id: "m_1", text: "one" }], title: "a turn" },
+          harness: { threadId: "thr_commit", subject: "user_1", state: { step: 4 } },
+          audit: { collection: "vendo_audit", record: { id: event.id, data: event } },
+        });
+        assert(landed.messages.count === 1, `turn.commit should report 1 message landed, got ${landed.messages.count}`);
+        const thread = await ops.transcripts.getThread("thr_commit");
+        assert(
+          thread?.revision === landed.messages.revision,
+          `turn.commit reported revision ${String(landed.messages.revision)}, the thread holds ${String(thread?.revision)}`,
+        );
+        assertDeepEqual(await ops.harness.get("thr_commit", "user_1"), { step: 4 }, "turn.commit did not land the harness state");
+        assertDeepEqual((await ops.engine.get("vendo_audit", "aud_turn"))?.data, event, "turn.commit did not land the audit row");
+      }),
+
+      // =====================================================================
+      // status
+      // =====================================================================
+
+      opsCase(opts, "status() returns a valid StoreWireStatus", async (ops) => {
+        const status = await ops.status();
+        assert(status.format === VENDO_STORE_WIRE_FORMAT, `status.format should be ${VENDO_STORE_WIRE_FORMAT}`);
+        assert(typeof status.ops === "number", "status.ops should be a number");
+        // `ops` is a LEVEL over STORE_WIRE_PATHS' declared order, not an
+        // inventory, so there is no single right number to assert: two mounts
+        // of different vintages both tell the truth with different numbers, and
+        // a mount that legitimately omits an optional family reports the prefix
+        // BEFORE it. This case used to pin the count exactly, which only held
+        // while every mount was the same vintage. What IS contract is the
+        // ceiling and the one question a client asks the level.
+        const declared = Object.keys(STORE_WIRE_PATHS).length;
+        assert(status.ops <= declared, `a mount cannot serve more than the ${declared} declared ops, got ${status.ops}`);
+        // The level's ONE contract use, and the only way it breaks a client: a
+        // caller feature-detects the batch append on this number alone, so a
+        // mount claiming the level must serve the op, and one serving the op
+        // must claim the level.
+        assert(
+          (status.ops >= STORE_WIRE_APPEND_MESSAGES_OPS) === (ops.transcripts.appendMessages !== undefined),
+          `status.ops ${status.ops} disagrees with transcripts.appendMessages being `
+          + `${ops.transcripts.appendMessages === undefined ? "absent" : "served"} `
+          + `(the batch append is op ${STORE_WIRE_APPEND_MESSAGES_OPS})`,
+        );
+        assert(
+          (status.ops >= STORE_WIRE_TURN_OPS) === (ops.turn !== undefined),
+          `status.ops ${status.ops} disagrees with the turn family being `
+          + `${ops.turn === undefined ? "absent" : "served"} `
+          + `(the envelopes are ops ${STORE_WIRE_TURN_OPS - 1} and ${STORE_WIRE_TURN_OPS})`,
+        );
+      }),
+    ],
+  };
+}

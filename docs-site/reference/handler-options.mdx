@@ -1,0 +1,259 @@
+---
+title: "Handler options"
+sidebarTitle: "Handler options"
+description: "Every createVendo option and what it does, plus the nested blocks: models, auth, guard, mcp, apps, profile, and sweep."
+---
+
+Exactly one key is required: an identity, as `auth`.
+
+`createVendo({ auth })` is day one. `createVendo()` is a type error, and `createVendo({})` throws `VendoError("validation")` naming the identity it is missing.
+
+## Composition
+
+| Option | Behavior |
+| --- | --- |
+| `models` | The model seats, keyed by job. See [below](#models) |
+| `auth` | The one door for identity — a preset's result (`authJs()`) or an object you write. Holds `principal`, `facts`, `pools`, `memberships`, `actAs`, and `oauth`. See [below](#identity) |
+| `principal` | **Deprecated alias** for `auth.principal`. Still works; mutually exclusive with `auth` |
+| `memberships` | `(principal) => Promise<Membership[]>`, the twin of `auth.memberships` for a host on the deprecated aliases. Set it and it wins outright. With `VENDO_API_KEY` and this seam unset, memberships come from Vendo Cloud, so `async () => []` is how a deployment with no orgs declines the tenant directory. Mutually exclusive with `auth` — setting both throws, so put it in `auth` instead |
+| `tools` | Host tool declarations in memory, the same `ExtractedTool[]` sync writes to `.vendo/tools.json`, and executable tools. The two shapes are told apart by `execute` |
+| `skills` | `Skill[]` mounted at `/host/skills` for the harness to list cheaply and load on demand. A name collision fails at boot naming both |
+| `components` | Host components exposed to the generation prompt, merged with `.vendo/catalog.json` with explicit entries winning by name. The same object `<VendoProvider components>` takes |
+| `catalog` | **Deprecated alias** for `components`. Still works; setting both throws |
+| `routes` | The host's own pages a generated view may link to, `{ name: { path, description } }`. A `<Link to="name">` refuses any name the map does not carry |
+| `theme` | Programmatic override for `.vendo/theme.json`. Resolved once at compose, so unlike design rules it is not re-read live |
+| `instructions` | The prose this deployment puts in front of the agent every turn. Override for `.vendo/brief.md`; a non-blank string wins, blank falls through |
+| `store` | Unset with `VENDO_API_KEY` set, the Cloud hosted store fills the slot |
+| `files` | Where every workspace file's content lives — one backing, no tiering. Set, `s3Files` or your own `FilesAdapter` holds all of them. Unset, the store's own blobs back it, capped at 5 MiB each, and the first over-cap write fails naming this key |
+| `sandbox` | Unlocks built apps: the disposable box one is sealed in. Unset, `VENDO_API_KEY` fills it with the Cloud sandbox; with neither, apps stay tree-only |
+| `harness` | Who thinks. Default `vendo()`, also `claudeCode()`, or your own via `defineHarness`. A harness declaring `requires: { sandbox: true }` with no sandbox is a boot error |
+| `knowledge` | Composes the `vendo_knowledge_search` tool. Unset, that tool does not exist |
+| `appDatabase` | Where a generated app's own SQL tables live — the one thing `vendo_apps_sql` runs against. Unset with a store wired, every app gets its own fenced schema inside that store's Postgres, and there is nothing to configure. A store with no SQL behind it composes no adapter and the tool does not exist |
+| `connectors` | The tools your deployment brings under one credential you hold — `openApiConnector`, `mcpConnector`, `composioConnector`, `cloudTools`, or your own. Each is used verbatim; `[]` means no connectors. A **deprecated** service-name string here means `connectedAccounts` and still works for one more minor |
+| `connectedAccounts` | The services each of your users connects for themselves, by name — `["gmail", "slack"]`. Scopes the agent's tools, the connect surface and its catalog to exactly those. Needs `VENDO_API_KEY`; `[]` means no connected accounts |
+| `connections` | Explicit connected-accounts adapter. Always wins over the composed default |
+| `actAs` | **Deprecated alias** for `auth.actAs` — scoped auth material for away host API execution. Still works; mutually exclusive with `auth` |
+| `serverActions` | The map `vendo sync` emits, keyed `"<module>#<exportName>"`. A missing key fails closed at execution |
+| `remixWiring` | The wiring `vendo sync` generates for your `<Remixable>` components, keyed by slot. Its tools join the one registry, guarded and audited like any host tool. Pass the same object to `<VendoProvider remixWiring={remixWiring}>` too — the provider renders the ported components' holes, and the ✦ appears only on slots it declares |
+| `guard` | The deployment's choke point as one value. See [below](#guard) |
+| `limits` | Per-user and per-org limits in your own logic. See [below](#limits) and [Limits](/users-orgs/limits) |
+| `secrets` | `{ get(name) }`. Default is environment-backed lookup |
+| `logger` | One structured event per line Vendo would have written to the console. Unset keeps those console lines |
+| `telemetry` | `boolean`. Wires the telemetry client. Unset is off |
+| `development` | Dev-only injection seams. `NODE_ENV=development` enables them, `false` disables that default |
+| `profileDir` | The project root `.vendo/` is read under. Unset keeps the process cwd |
+| `fetch` | The fetch host route and OpenAPI bindings execute through. An explicit function always wins |
+| `profile` | The `.vendo/` pieces as in-memory compose-time inputs. See [below](#profile) |
+| `shell` | The agent's `bash` over the user's own files. On by default when the resident brain is `vendo()`; `false` withholds it, `{ limits }` moves its per-call wall clock and output ceiling |
+| `mcp` | Opens the MCP door. Off by default. See [below](#mcp) |
+| `oauth` | **Deprecated alias** for `auth.oauth` — the `HostOAuthAdapter` the door uses for session lookup and principal resolution. Still works; mutually exclusive with `auth`. One of the two is required when `mcp` is on |
+| `agent` | A whole agent built by `agent()`. This deployment adopts its harness, store, files adapter, sandbox, and instructions |
+| `agents` | More agents built by `agent()`, registered by name so an automation they declared with `.on()` fires through them. Registration only; two agents sharing a name refuse to compose |
+| `sweep` | TTL-sweep cadence for expired parked calls and stranded approvals. See [below](#sweep) |
+| `toolOutputCap` | How much of one tool result reaches the model, in characters. Default `32000`; `0` disables |
+| `uploadMaxBytes` | What one upload may carry, in bytes — the same cap at both doors, `POST /files` from the browser and `vendo_user_files_put` over MCP. Default `5242880` (5 MiB). A door cap, not a storage cap — `vendo.putUserFile` is bounded by whatever backs `files:` |
+| `maxInitialTools` | Cap on the uncurated initial tool loadout. Default `128`; the rest stay discoverable via `find_tools` |
+| `loadout` | Explicit curated initial loadout, by tool name. Names that do not exist are dropped |
+| `apps` | `false` unmounts app generation entirely. See [below](#apps) |
+| `automations` | `false` unmounts automations: `/automations`, `/runs`, and `/webhooks` answer not-found and `vendo.emit` refuses |
+| `channels` | `{ text: true }` opens the text channel. Needs `VENDO_API_KEY`; the phone-to-user binding stays in your store |
+
+Passing a key that was removed throws at boot naming its new home: `model` became `models.default`, `paint` split into `models.apps` and `apps: false`, `brief` became `instructions`, `policy` / `judge` / `approvals` moved inside `guard({ … })`, and `connectorApps` became `connectedAccounts`.
+
+## `models`
+
+One seat per job that actually runs. A seat is a job, not a model, so the same model may fill several and swapping one never renames the others.
+
+| Seat | Default | Feeds |
+| --- | --- | --- |
+| `default` | the credential ladder | chat, compaction, subagents, and automations |
+| `apps` | `default`'s object, or its own rung pick when `default` rode the ladder | the agent that writes generated apps |
+| `review` | the same, and on a provider key the rung pick is its fast model | the AI reviewer that grades finished apps |
+| `judge` | the same, and on a provider key the rung pick is its fast model | a judge you wired from a string. No judge runs by default |
+
+Each seat takes a model-name string, resolved through the credential ladder, or an explicit AI SDK `LanguageModel` object, which wins as-is.
+
+A name string is pinnable per seat with `VENDO_MODEL`, `VENDO_MODEL_APPS`, `VENDO_MODEL_REVIEW`, and `VENDO_MODEL_JUDGE`. A key that is not a seat throws `models.<key> is not a model seat`.
+
+## `guard`
+
+`guard({ policy, judge, approvals, breakers })` declares the rules and this composition completes them with the store, risk grading, and the org-policy layer. A `VendoGuard` built by `createGuard({ store, … })` is taken verbatim instead.
+
+| Sub-key | Default | Behavior |
+| --- | --- | --- |
+| `policy` | unset | A named preset, inline rules and directions, a policy file, or a code escape hatch |
+| `judge` | unset | The contextual guard judge |
+| `approvals.parkedCallTtlMs` | 60 min; `0` disables expiry | Idle timeout for a guarded call parked from your own agent loop. Past it the sweep denies the approval |
+| `breakers.maxCallsPerMinute` | 60 | Per principal. `0` makes every call ask |
+| `breakers.maxWritesPerRun` | 20 | Per run, counting `write` and `destructive` calls |
+
+Named presets: `"cautious"` lets reads run and asks before writes or destructive calls, `"readonly"` lets reads run and blocks everything else, `"autopilot"` runs everything.
+
+`"cautious"` makes one exception to that prompt: the agent's `bash` runs without asking. It is still graded `write`, so it takes an audit row per call and answers to your own rules and the kill switch — but an automation has nobody to answer an approval card, and a prompt here would mean the shell could never run unattended. Add your own rule for the `bash` tool to put the prompt back.
+
+`guard({ policy: {} })` reads the default `.vendo/policy.json`, which is what `vendo init` scaffolds. It reads fail-soft, so a missing file also auto-runs with no notice; keep the file in version control. `vendo doctor` is what tells you it is gone — `config/policy.json` fails with [E-CFG-001](/production/troubleshooting/e-cfg-001).
+
+Omitting the `guard` key entirely surfaces an unconfigured-policy notice in the shipped chrome. Past either breaker, a would-be auto-run parks for approval until the window clears.
+
+## `limits`
+
+Vendo counts, you decide. The callback is asked once before each metered action.
+
+```ts
+createVendo({
+  auth,
+  limits: async ({ user, action, count }) => {
+    if (action !== "message") return true;
+    return (await count("message", { days: 30 })) < 500;
+  },
+});
+```
+
+`count(action, window?)` is already bound to that user. `window` takes `days`, `hours`, and `minutes`, ANDed into one lookback, a `since` instant, or a `pool` name to count a shared meter instead.
+
+Return `false`, or `{ allow: false, message }` to say why in your own words, and the action is refused and never counted. Anything else allows it and the meter records it.
+
+A policy against a store with no usage meter is refused at composition. A callback that throws denies and logs `limits.callback_error`.
+
+[Limits](/users-orgs/limits) walks the per-user cap, the per-org pool, windows, and what a blocked user sees.
+
+## `mcp`
+
+`true` takes the defaults. The object form carries door-specific settings through the umbrella.
+
+| Sub-key | Behavior |
+| --- | --- |
+| `baseUrl` | The canonical public base every discovery, issuer, and resource URI derives from. Defaults to `VENDO_BASE_URL`; forwarded headers are never trusted |
+| `remoteAs` | `{ issuer, jwksUri?, audience }`. Trust an external authorization server; the door's own `/authorize`, `/token`, `/revoke`, `/register`, and RFC 8414 metadata all answer `404` |
+| `federation` | `{ secret }`. Opens the signed login handshake at `{mount}/federate` |
+| `serviceAuth` | `{ keys }`. Opens the RFC 8693 exchange at the door's own `/token`, so your backend swaps a key plus one of your user ids for a short-lived user-bound token |
+
+A key is any opaque string (`openssl rand -hex 32`), the door never writes one down, and rotation is listing both keys until the old one is out of use.
+
+`serviceAuth` is itself a local authorization-server choice, so it fills the same slot `VENDO_MCP_BROKER_URL` fills and the environment default never displaces it.
+
+## `oauth`
+
+| Sub-key | Signature | Behavior |
+| --- | --- | --- |
+| `principal` | `(subject) => Promise<Principal \| null>` | **Required.** Re-resolved on every door request, so returning `null` is revocation |
+| `session` | `(req, { returnTo }) => Promise<Response \| { subject }>` | Selects the door's prebuilt consent page. Return the subject, or a login redirect through `returnTo` |
+| `authorize` | `(req, { clientName, scopes, consent? }) => Promise<Response \| { subject }>` | The full-page escape hatch. Beside `session`, a returned Response replaces the consent page while the door keeps CSRF, replay, and redirect handling |
+
+## `apps`
+
+`false` unmounts app generation entirely: `vendo_make` and the `vendo_apps_*` tools are absent, the `building-apps` skill is absent, and `/apps` answers not-found.
+
+| Sub-key | Default | Behavior |
+| --- | --- | --- |
+| `designRules` | `.vendo/design-rules.md`, re-read per generation | A non-blank string wins and is then fixed for the instance lifetime |
+| `review.reviewer` | unset | `(ctx) => boolean`. Unset, the review queue shows only the caller's own submissions and reject refuses naming this hook |
+| `pipeline.smokeRender` | on unless explicitly `false` | Headless smoke render of every generated island before it ships |
+| `checks` | `[]` | Host checks appended to the built-ins. They add findings, never remove one |
+
+A check is `{ name, run(input) }` returning `Finding[]`, or `{ name, kind: "judgment", rule }` whose sentence joins the AI reviewer's rubric.
+
+A `block` finding stops the ship and a `warn` rides along. A check that throws degrades to a `warn` naming it, so a broken check never takes an app down.
+
+Built apps have no flag. They are gated by a configured `sandbox` adapter alone.
+
+## `profile`
+
+The `.vendo/` pieces as in-memory compose-time inputs, for venues with no filesystem. Each is independent and each wins over its file.
+
+| Sub-key | Replaces |
+| --- | --- |
+| `overrides` | `.vendo/overrides.json` |
+| `theme` | `.vendo/theme.json` |
+| `brief` | `.vendo/brief.md`. Top-level `instructions` wins |
+| `catalog` | `.vendo/catalog.json` |
+| `policy` | `.vendo/policy.json`. `guard({ policy })` wins |
+| `designRules` | `.vendo/design-rules.md`. `apps.designRules` wins |
+| `tools` | **Deprecated**. Use the top-level `tools` slot |
+
+`overrides` and `tools` are validated lazily, so a malformed piece throws on the first actions use rather than at `createVendo`.
+
+## `sweep`
+
+`{ intervalMs }`, default 60 seconds. One pass expires orphaned parked calls and stranded approvals, driving both the amortized on-request sweep and the background timer.
+
+## Turn context
+
+Two owners, and the split is the point. What the deployment curates sits at the top level; what the thinker decides is set where the thinker is named.
+
+```ts {6-8}
+createVendo({
+  principal,
+  instructions: "Answer in the product's voice; never invent account numbers.",
+  toolOutputCap: 32_000,
+  maxInitialTools: 128,
+  harness: vendo({
+    maxSteps: 20,
+    historyWindow: 20,
+    maxOutputTokens: 4_000,
+  }),
+});
+```
+
+There is no `agent: { … }` options bag. It was one bag holding both owners, so a host configured the thinker through a key the thinker never saw.
+
+| `vendo()` knob | Default | Behavior |
+| --- | --- | --- |
+| `maxSteps` | `20` | Agent steps, a model call plus a tool round trip, per turn. At the cap Vendo stops the loop and emits a step-limit notice on the stream |
+| `historyWindow` | full thread | Whole past messages re-sent per turn, kept whole so tool-call and result stay paired. The stored thread is untouched |
+| `maxOutputTokens` | the model default | Upper bound on tokens the model may emit per turn |
+| `contextTokenBudget` | unset | Bounds the assembled context the loop sends |
+
+`maxInitialTools` bounds how many host tools the model sees at the start of a turn. Past the cap Vendo picks a deterministic read-first loadout, safest risk then name, and the rest stay reachable through `find_tools`.
+
+Vendo's own `vendo_*` tools are always active and do not count toward the cap. Every tool, initial or searched-in, executes through the same guard binding.
+
+`toolOutputCap` truncates only the copy sent to the model. Persistence and the streamed thread are unaffected.
+
+A harness you named yourself carries its own equivalents. These four are `vendo()`'s.
+
+## Turn cancellation
+
+Vendo cancels an in-flight turn when the client disconnects. The wire forwards the request's `AbortSignal` into the agent loop, so closing the tab aborts the provider call and stops further steps.
+
+The thread is left consistent and resumable. No configuration is required.
+
+## Base path
+
+The server's base path is the fixed constant `/api/vendo`. It is not configurable: the handler answers only paths under it and returns `not-found` for anything else.
+
+`createVendoClient({ baseUrl })` configures the client side. Point it at a full origin when the browser talks to a Vendo deployment on another host.
+
+## Identity
+
+`auth` is one door with two spellings — a preset's result, or an object you write. A preset is a function returning that object, so nothing is reserved to the preset path:
+
+```ts
+interface HostAuthPreset {
+  principal: (req: Request) => Promise<Principal | null>;
+  facts?: (req: Request) => Promise<Record<string, Json> | undefined>;
+  pools?: (req: Request) => Promise<Record<string, string> | undefined>;
+  memberships?: (principal: Principal) => Promise<Membership[]>;
+  actAs?: ActAs;
+  oauth?: HostOAuthAdapter;
+  name?: string; // shipped presets only — the boot summary reads it
+}
+```
+
+`principal` is the only required member; each other one absent means the documented "not asserted" behavior, never an error. Vendo mints no principals of its own, so a config with no `principal` at all refuses to compose.
+
+A hard-wired subject is a development stand-in, never a deployment:
+
+```ts
+createVendo({ auth: { principal: async () => ({ kind: "user", subject: "dev" }) } });
+```
+
+`principal(req)` must return `kind: "user"` or `null`. Returning `kind: "org"`, or a subject starting with `vendo:`, is rejected at the wire because those identities are Vendo-owned. `null` refuses the request with `forbidden`.
+
+If you want logged-out visitors served, resolve them to a principal of your own choosing. Marking it `ephemeral: true` keeps it out of org membership and blocks it from connecting external accounts.
+
+The seams `facts`, `pools`, and `memberships` run once per context resolution. `facts` becomes the prompt's `[User]` block, `pools` feeds the limits policy, and `memberships` answers `can()`. Every asserted membership is already a pool named `org:<orgId>`, so an org cap needs no `pools` seam of its own.
+
+The top-level `principal`, `actAs`, and `oauth` keys are deprecated aliases for the members of the same name. They keep working for this whole major, but each is one seam with nowhere to grow — `facts` and `pools` never had a top-level twin, which is the reason the door consolidated. Passing `auth` beside any of the three — or beside the top-level `memberships` seam, which fills the same slot — throws `VendoError("validation")` naming the mixed keys.
+
+See [Your users](/users-orgs/your-users) for `facts` and [Orgs & memberships](/users-orgs/orgs-and-memberships) for `memberships`.

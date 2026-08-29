@@ -1,0 +1,93 @@
+---
+title: "Persistence"
+sidebarTitle: "Persistence"
+description: "Where threads, apps, records, grants, approvals, and audit rows live on Vendo Cloud, and what the store refuses."
+---
+
+Your Cloud key is your database. Threads, apps, records, blobs, grants,
+approvals, audit, and runs persist in Vendo Cloud's Postgres.
+
+## The store slot fills itself
+
+`createVendo` picks the store at composition time. With `VENDO_API_KEY` set and
+no `store` passed, the slot takes the hosted store.
+
+```ts app/api/vendo/[...vendo]/route.ts highlight={5}
+import { createVendo } from "@vendoai/vendo/server";
+
+export const vendo = createVendo({
+  auth: authJs(),
+  // no store: line, so VENDO_API_KEY fills the slot with Vendo Cloud
+  components: registry,
+});
+```
+
+The adapter never reads the environment. The composition does, then hands the
+adapter a key and a base URL. Your boot log says which one won:
+
+```text vendo ready highlight={2}
+◆  vendo ready
+│  ✓ store     cloud    VENDO_API_KEY
+```
+
+Tenancy resolves server-side from the key's organization on every call — nothing
+in your process picks a tenant. `ensureSchema()` is a no-op here, because the
+service owns its own migrations.
+
+Passing your own `store` adapter also works, and always wins.
+
+---
+
+## What lands where
+
+| What | Where it goes | Notes |
+| --- | --- | --- |
+| Threads and messages | `vendo_threads`, `vendo_thread_messages` | Scoped to the principal's subject; a thread never crosses subjects |
+| Harness state | `vendo_threads.harness_state` | One slot per thread, so a session-owning harness resumes across restarts. Writes never bump the thread's `revision` or `updated_at` — resuming is not an edit |
+| Generated apps | `vendo_apps` | Plus their workspace files and history |
+| App data | one schema per app, `vendo_app_<id>_<digest>` | Real SQL. `shared.` tables are the app's; `mine.` tables are one per user |
+| Grants and approvals | `vendo_grants`, `vendo_approvals` | What a user has standing consent for |
+| Audit | `vendo_audit` | Append-only |
+| Automation runs | `vendo_runs` | One row per firing |
+
+Blobs ride the same store unless you pass a `files` adapter, so rows and
+objects can never drift apart.
+
+---
+
+## What the store refuses
+
+Three writes are refused outright, each with a code rather than a silent no-op.
+
+| Write | Refusal |
+| --- | --- |
+| Re-writing a `vendo_audit` id that already exists | `conflict` |
+| Deleting an audit row | `blocked` — audit rows are permanent |
+| Moving a `vendo_apps`, `vendo_grants`, or `vendo_threads` row to a different subject | Refused; delete the row and re-seed it under the new subject |
+
+Secrets never ride the hosted wire. The store has no secrets surface by
+construction: values resolve from your process environment first, and Cloud's
+secrets provider answers only for names the environment leaves unset.
+
+---
+
+---
+
+## Racing writers
+
+Two ticks, two retries, or two agent runs can land on the same record. The
+collection handle carries compare-and-set primitives for that case.
+
+```ts highlight={3}
+const jobs = vendo.store.records("jobs");
+
+const mine = await jobs.claim?.(expected, replacement);
+const inserted = await jobs.atomic?.insertIfAbsent(record);
+```
+
+`claim` returns `true` for the single caller whose read of `expected` still
+matched. `insertIfAbsent` and `compareAndSwap` return `null` when another caller
+won.
+
+Both are optional on the handle, which is why the calls above are guarded. Your
+own collections expose them; Vendo's internal tables vary.

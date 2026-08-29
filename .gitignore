@@ -1,0 +1,156 @@
+node_modules
+node_modules/
+dist
+.turbo
+.pnpm-store/
+*.tsbuildinfo
+
+# demo app
+.next/
+*.log
+
+# Next rewrites this on every dev/build boot to point at whichever distDir ran
+# last, so a tracked copy is dirty after every test run — over a hundred stashes
+# in this repo's history are named for exactly that churn. Every other Next app
+# here already leaves it untracked; fixtures/host-app was the lone exception.
+next-env.d.ts
+
+# misc
+corpus/.repos/
+
+# env files (secrets) — never committed
+.env
+
+# browser-verification artifacts
+.playwright-mcp/
+*.png
+
+# ...except the public docs site's images, which are SHIPPED assets, not review
+# artifacts. The blanket `*.png` above swallowed ten of them silently: they sat
+# on disk, the local Mintlify server served them, and they would have 404'd in
+# production. Every check passed because it asked disk, not git.
+!docs-site/images/**/*.png
+
+# ...and the cloud half's served static dirs, for the same reason: `*.png` is
+# this repo's only unanchored extension rule, and the merge put two Next
+# `public/` trees under it. Deliberately NOT cloud/site/tests/evidence/ — those
+# really are review artifacts, which is what the blanket is for.
+# (`cloud/` is Vendo Cloud's closed source; it has no files in this repo.)
+!cloud/*/public/**/*.png
+
+# ...except RAW MEASUREMENT DATA under docs/verification: logs, counters, and
+# sample sets are small, they diff, and a lane's claims are worthless without
+# them. Without this negation every lane has to remember `git add -f` and the
+# data quietly goes missing.
+!docs/verification/**/*.log
+
+# Media stays OUT. Screenshots, GIFs, and recordings are review artifacts with
+# a one-PR lifespan; committing them grew docs/ to 126MB and broke container
+# uploads (2026-07-27 cleanup). Attach them to the PR instead — see
+# docs/verification/README.md.
+docs/verification/**/*.png
+docs/verification/**/*.jpg
+docs/verification/**/*.jpeg
+docs/verification/**/*.gif
+docs/verification/**/*.webm
+docs/verification/**/*.mp4
+docs/verification/**/*.mov
+
+# Factory lane scratch at the repo ROOT — a lane's working notes, contract,
+# park file and report are its own, never the repo's. Four of these had already
+# leaked onto main (progress.md, log.md, HANDOFF-harness.md, LANE-REPORT.md)
+# and are removed in the same change that adds these rules. Root-anchored on
+# purpose: docs/ and package dirs may legitimately carry a file of the same
+# name. HANDOFF*.md covers the per-lane contracts the conductor compiles
+# (HANDOFF-<lane>.md) as well as a bare HANDOFF.md.
+/progress.md
+/log.md
+/PARKED.md
+/HANDOFF*.md
+/LANE-REPORT.md
+
+# Vendo demo runtime state (PGlite) — never committed.
+.vendo/data/
+examples/*/.vendo/data/
+examples/*/.vendo/data-*/
+fixtures/*/.vendo/data/
+# Same state, written by a package's own tests: the capability-miss sink resolves
+# its data dir from the cwd, so a real-path test of that rail
+# (packages/vendo/tests/harness-wire.test.ts) lands misses.jsonl here.
+packages/*/.vendo/data/
+
+# The splitter's remix wiring file — build output, rewritten whole on every
+# `vendo sync`. The captured baselines beside it (.vendo/remixable/) are
+# committed; this is derived from them and from the host's own source.
+**/.vendo/generated/
+
+# wave-6 orchestration lane briefs/signals (never committed)
+.lanes/
+
+# type-surface test fixtures (packages/vendo/tests/type-surface.test.ts) — cleaned
+# in afterEach; ignored so an interrupted run can never dirty a commit.
+packages/vendo/.type-surface.*.ts
+packages/vendo/.wire-parity.*.ts
+
+# chrome export-surface test fixtures (packages/ui/test/chrome/export-surface.test.ts)
+# — same afterEach cleanup, same interrupted-run hazard.
+packages/ui/.chrome-surface.*.ts
+
+# Coverage reports (v8 / vitest)
+coverage/
+
+# Local env files — NEVER commit keys (browser-verification gate).
+.env
+.env.local
+.env.*.local
+examples/*/.env.local
+
+# The cloud half's own ignore file moved with it, to cloud/site/.gitignore, so
+# its `.env*` and `*.pem` rules stopped reaching cloud/console and cloud/workers
+# — and Next really does load `.env.production`. Nothing announces this: it goes
+# wrong the first time somebody commits one. Here rather than in each subproject
+# so a cloud subproject added later is covered the day it is created; `.dev.vars`
+# is Wrangler's local secret file, uncovered outside cloud/console on both sides
+# of the merge.
+# (`cloud/` is Vendo Cloud's closed source; it has no files in this repo.)
+cloud/**/.env*
+cloud/**/*.pem
+cloud/**/.dev.vars
+!cloud/**/.env.example
+
+# speed lane raw samples (aggregated into README table)
+docs/verification/vendo-v2-speed/samples.ndjson
+
+# w4-pipeline lane raw samples (aggregated into README table)
+docs/verification/w4-pipeline/samples.ndjson
+
+# brainstorm visual companion sessions
+.superpowers/
+
+# throwaway design exploration (never committed)
+design-canvas/
+packages/apps/box/claude-turn.mjs
+packages/apps/box/turn-routes.mjs
+
+# The screen engine's WebAssembly, copied out of the wasmfile dependency by
+# @vendoai/apps' build (and shipped by its "files") — generated, never authored.
+packages/apps/quickjs.wasm
+
+# Agent working notes and factory process exhaust — useful locally, not shipped.
+# Lane contracts, raw proof logs, and eval run dumps stay on their branches.
+# Skills are the exception: they are shared project tooling, so they are tracked.
+# `.claude/*` and not `.claude/`, because git never descends into an excluded
+# directory and the negation below would never be reached.
+.claude/*
+!.claude/skills/
+docs/verification/
+docs/eval/runs/
+
+# Per-PID scratch fixtures written by wire-type-parity.test.ts (a killed run leaves them behind)
+packages/vendo/.wire-parity.*
+
+# Harness/test run outputs — write-only sinks, never committed
+corpus/reports/
+fixtures/existing-agents-e2e/.artifacts/
+fixtures/install-seam/.artifacts/
+genbench/runs/

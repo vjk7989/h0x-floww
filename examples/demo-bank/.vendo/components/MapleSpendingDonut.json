@@ -1,0 +1,46 @@
+{
+  "name": "MapleSpendingDonut",
+  "hash": "sha256:7935a92ede017374c407db4215cb7045404ded73ecddc9be765556c0d71cbf57",
+  "capturedAt": "2026-08-29T19:58:37.488Z",
+  "module": "src/vendo/registry.tsx",
+  "export": "MapleSpendingDonut",
+  "entry": "60300670c2f814a27ff48a2f270eaddbc03d4c2aa875626cefb3cb75f26787fd",
+  "modules": {
+    "src/components/charts/colors.ts": "e70ee17caf58f4da9d74acb4953706f5191d110ce73f7df76c414ec887cd9d5d",
+    "src/components/charts/donut.tsx": "27c17823d5c225efad6abba8deb9278590eab732cb6225bc763e6cd3f18c0aa5",
+    "src/components/charts/sparkline.tsx": "6cc5ebdfb52327dbd31c89529a06235cf6a42a547fba8e8b6aee8ec06954b264",
+    "src/components/home/net-worth-view.tsx": "8d4424b1789cb90eed66d1d92143b50822ed25276c34b6787c1e44d0b5a4c759",
+    "src/lib/cn.ts": "1b0d1bca422f7bacdc48d59d3811e7cf9c8e354c357114dea9993165645e7bde",
+    "src/lib/money.ts": "e782e5e81dc80c4cd375622c390a03f634aeaf05a1f01bfe15ee8a4436c8de92"
+  },
+  "styles": [
+    {
+      "path": "src/app/globals.css",
+      "ref": "2d801c5c7103f19cbadcfc4f5e83cf316aabed6ddd601928297723d7b9036dfc"
+    }
+  ],
+  "bytes": 20668,
+  "requires": [
+    "clsx",
+    "recharts",
+    "tailwind-merge",
+    "zod"
+  ],
+  "packages": {
+    "recharts": "recharts@3.9.2"
+  },
+  "sampleProps": {
+    "slices": [
+      {
+        "category": "dining",
+        "amount": 34218
+      },
+      {
+        "category": "groceries",
+        "amount": 28642
+      }
+    ],
+    "size": 200
+  },
+  "sampleOrigin": "declared"
+}

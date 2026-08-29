@@ -1,0 +1,115 @@
+---
+title: "AI SDK"
+sidebarTitle: "Quickstart: AI SDK"
+description: "Spread Vendo's guarded tool pack into a Vercel AI SDK loop you already run, and render what it returns in your own chat."
+icon: "/images/logos/vercel.svg"
+---
+
+Keep your loop. Vendo adds the guarded tools and renders what they return.
+
+<Steps>
+
+<Step title="Install and run init">
+
+<CodeGroup>
+
+```bash npm
+npm install @vendoai/vendo
+npx vendo init
+```
+
+```bash pnpm
+pnpm add @vendoai/vendo
+pnpm exec vendo init
+```
+
+</CodeGroup>
+
+This page picks up from a Next.js App Router app that already runs an AI SDK `streamText` loop. If you don't have one yet, the [AI SDK chatbot quickstart](https://ai-sdk.dev/docs/getting-started/nextjs-app-router) gets you there first; run init from that app's root.
+
+Init asks four things and takes a few minutes — [`vendo init`](/reference/vendo-init) covers all of them. Answer the first with **Through my own agent loop (AI SDK / Mastra)**, and take **Vendo Cloud** on the model one.
+
+There are two model budgets on this path. The Cloud key pays for the screens and apps Vendo generates; your own loop keeps its own key — `model: yourModel` below is untouched — so set `ANTHROPIC_API_KEY` or your provider's equivalent too. No browser to approve the Cloud key in? Pass `--cloud-key <key>`, or `--byo` to skip Cloud entirely.
+
+</Step>
+
+<Step title="Spread the tools in">
+
+```ts app/api/chat/route.ts focus={2,14}
+import { convertToModelMessages, stepCountIs, streamText } from "ai";
+import { vendoTools } from "@vendoai/vendo/ai-sdk";
+import { resolvePrincipal, vendo } from "@/lib/vendo";
+
+export async function POST(req: Request) {
+  const { messages } = await req.json();
+  const caller = await resolvePrincipal(req);
+  if (!caller) return new Response("Unauthorized", { status: 401 });
+  return streamText({
+    model: yourModel,            // your model, unchanged
+    messages: await convertToModelMessages(messages),
+    stopWhen: stepCountIs(5),    // the AI SDK stops after one step by default
+    system: "…your system prompt as it is",
+    tools: { ...yourTools, ...(await vendoTools(vendo, { principal: caller })) },
+  }).toUIMessageStreamResponse();
+}
+```
+
+The pack is built per request, inside the handler, so every tool runs as the caller. Tools arrive under a `vendo_` prefix; `include` and `exclude` trim the pack.
+
+</Step>
+
+<Step title="Render the embeds">
+
+```tsx app/page.tsx focus={3-7}
+import { isVendoToolPart, VendoToolResult } from "@vendoai/vendo/react";
+
+if (isVendoToolPart(part)) {
+  return part.state === "output-available"
+    ? <VendoToolResult key={key} output={part.output} />
+    : <div key={key}>Building…</div>;
+}
+// your own parts fall through to your own rendering
+```
+
+Nothing to wrap: the embed finds the wire at `/api/vendo` and rides your host session cookie. `isVendoToolPart` owns the whole "is this ours" question and narrows the part, so `part.state` and `part.output` typecheck. Wait for `output-available` before you render — a generated app streams for a few seconds first, and an embed handed nothing renders nothing. One component covers data, apps, and approvals — [Embeds in your chat](/existing-agent/embeds) has the full contract.
+
+</Step>
+
+<Step title="Run it">
+
+```bash
+npm run dev
+```
+
+Ask for something the agent has to build: *"Make me a Recent Activity view listing my three most recent transactions."* You'll see a `vendo_make` call stream for a few seconds, then the generated app render inline in your own chat.
+
+Fresh out of init, that app has no data to show — the only route init found was your chat route, and it excludes that one because it runs a model loop. Its empty state will say so. [Add tools](/howto/tools) is where you point Vendo at your real API and the agent gets hands.
+
+</Step>
+
+</Steps>
+
+## Make it yours
+
+The setup was the same for everyone. These, in order, make it yours.
+
+<CardGroup cols={3}>
+  <Card title="Wire auth" icon="key" href="/howto/auth">
+    Swap the demo principal for your real sign-in.
+  </Card>
+  <Card title="Add tools" icon="wrench" href="/howto/tools">
+    Point Vendo at your API — the agent gets hands.
+  </Card>
+  <Card title="Approve actions" icon="shield-check" href="/howto/approvals">
+    Decide what runs and what asks first.
+  </Card>
+  <Card title="Generate screens" icon="wand-magic-sparkles" href="/howto/screens">
+    Ask for a view, pin it into your grid.
+  </Card>
+  <Card title="Theme it" icon="palette" href="/howto/theming">
+    Your fonts, colors, and radii on every surface.
+  </Card>
+  <Card title="Set instructions" icon="file-pen" href="/howto/instructions">
+    The brief your agent reads before every turn.
+  </Card>
+</CardGroup>

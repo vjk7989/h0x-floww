@@ -1,0 +1,147 @@
+// @vitest-environment jsdom
+import type { UIPayload } from "@vendoai/core";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { VendoProvider, createVendoClient, type VendoClient } from "../../src/index.js";
+import { VendoOverlay, VendoSlot } from "../../src/chrome/index.js";
+import { createWireServer } from "../wire-server.js";
+
+/** A minimal pinned generated view — a vendo-genui/v2 tree of a single Text
+ *  primitive. This is the "pinned component" the slot mounts in place (08 §4). */
+const pinPayload = {
+  formatVersion: "vendo-genui/v2",
+  root: "root",
+  nodes: [{ id: "root", component: "Text", props: { text: "Pinned revenue card" } }],
+} as UIPayload;
+
+describe("VendoSlot empty-state CTA + pinned-component path (ENG-223)", () => {
+  let wire: Awaited<ReturnType<typeof createWireServer>>;
+  let client: VendoClient;
+
+  beforeEach(async () => {
+    wire = await createWireServer();
+    client = createVendoClient({ baseUrl: wire.url });
+  });
+
+  afterEach(async () => {
+    cleanup();
+    vi.restoreAllMocks();
+    await wire.close();
+  });
+
+  it("renders the empty-state CTA as a real, focusable button", async () => {
+    render(<VendoProvider client={client}><VendoSlot id="hero" /></VendoProvider>);
+    const cta = await screen.findByRole("button", { name: /design a view/i });
+    cta.focus();
+    expect(document.activeElement).toBe(cta);
+  });
+
+  it("invokes onAuthor with the slot id when the CTA is activated", async () => {
+    const onAuthor = vi.fn();
+    render(<VendoProvider client={client}><VendoSlot id="hero" onAuthor={onAuthor} /></VendoProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: /design a view/i }));
+    expect(onAuthor).toHaveBeenCalledWith("hero");
+  });
+
+  it("opens the conversation overlay by default when the CTA has no onAuthor", async () => {
+    render(
+      <VendoProvider client={client}>
+        <VendoSlot id="hero" />
+        <VendoOverlay launcher="none" />
+      </VendoProvider>,
+    );
+    expect(screen.queryByRole("dialog", { name: "Vendo assistant" })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /design a view/i }));
+    expect(await screen.findByRole("dialog", { name: "Vendo assistant" })).toBeTruthy();
+  });
+
+  it("suggestion chips prefill the conversation composer — never send", async () => {
+    render(
+      <VendoProvider client={client}>
+        <VendoSlot id="hero" emptyState={{ suggestions: ["Track my upcoming renewals"] }} />
+        <VendoOverlay launcher="none" />
+      </VendoProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Track my upcoming renewals" }));
+    await screen.findByRole("dialog", { name: "Vendo assistant" });
+    const composer = await screen.findByRole("textbox", { name: /message/i });
+    await waitFor(() => expect((composer as HTMLTextAreaElement).value).toBe("Track my upcoming renewals"));
+    // Prefill only: nothing was sent over the wire.
+    expect(wire.requests.some(request => request.path === "/threads")).toBe(false);
+  });
+
+  it("renders the host-configurable invitation copy", async () => {
+    render(
+      <VendoProvider client={client}>
+        <VendoSlot id="hero" emptyState={{ title: "Build your corner", subtitle: "any view you can describe", ctaLabel: "Start" }} />
+      </VendoProvider>,
+    );
+    expect(await screen.findByText("Build your corner")).toBeTruthy();
+    expect(screen.getByText("any view you can describe")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Start" })).toBeTruthy();
+  });
+
+  it("keeps the default CTA a safe no-op when no overlay or palette is mounted", async () => {
+    render(<VendoProvider client={client}><VendoSlot id="hero" /></VendoProvider>);
+    const cta = await screen.findByRole("button", { name: /design a view/i });
+    expect(() => fireEvent.click(cta)).not.toThrow();
+    expect(screen.queryByRole("dialog", { name: "Vendo assistant" })).toBeNull();
+  });
+
+  it("says how to reach the assistant when the press has nowhere to go", async () => {
+    // The third arm of the press, and the only runtime-detected one: no
+    // onAuthor, no overlay, no palette. The button used to swallow the press.
+    render(<VendoProvider client={client}><VendoSlot id="net-worth-card" /></VendoProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: /design a view/i }));
+    expect(screen.getByRole("status").textContent)
+      .toBe("Ask your assistant to build something for this spot. Net worth card");
+    // The button that had nowhere to go goes with it — nothing left that lies.
+    expect(screen.queryByRole("button", { name: /design a view/i })).toBeNull();
+  });
+
+  it("keeps the hint away when the press had somewhere to go", async () => {
+    render(<VendoProvider client={client}><VendoSlot id="hero" onAuthor={vi.fn()} /></VendoProvider>);
+    fireEvent.click(await screen.findByRole("button", { name: /design a view/i }));
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("mounts a pinned component in the slot, in place of the host children", async () => {
+    render(
+      <VendoProvider client={client}>
+        <VendoSlot id="hero" pin={{ payload: pinPayload }}><span>Original hero</span></VendoSlot>
+      </VendoProvider>,
+    );
+    expect(await screen.findByText("Pinned revenue card")).toBeTruthy();
+  });
+
+  it("threads live pin data through, overriding the tree's embedded data model", async () => {
+    const bound = {
+      formatVersion: "vendo-genui/v2",
+      root: "root",
+      data: { revenue: { label: "Stale embedded label" } },
+      nodes: [{ id: "root", component: "Text", props: { text: { $path: "/revenue/label" } } }],
+    } as UIPayload;
+    render(
+      <VendoProvider client={client}>
+        <VendoSlot id="hero" pin={{ payload: bound, data: { revenue: { label: "Live pinned revenue" } } }}>
+          <span>Original hero</span>
+        </VendoSlot>
+      </VendoProvider>,
+    );
+    expect(await screen.findByText("Live pinned revenue")).toBeTruthy();
+  });
+
+  it("falls back to the host children when the pinned component throws on mount", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const broken = {} as UIPayload;
+    Object.defineProperty(broken, "formatVersion", {
+      get() { throw new Error("pin mount exploded during render"); },
+    });
+    render(
+      <VendoProvider client={client}>
+        <VendoSlot id="hero" pin={{ payload: broken }}><span>Safe original</span></VendoSlot>
+      </VendoProvider>,
+    );
+    expect(await screen.findByText("Safe original")).toBeTruthy();
+  });
+});

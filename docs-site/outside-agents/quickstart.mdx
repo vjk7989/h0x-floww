@@ -1,0 +1,190 @@
+---
+title: "From outside agents"
+description: "Turn your app into an MCP server that Claude, ChatGPT, Cursor and your own backend drive as one of your users."
+sidebarTitle: "Quickstart: outside agents"
+---
+
+`vendo init` turns your app into an MCP server. Your own agent connects to it and
+acts as the user who is signed in — same guard, same approvals, same audit trail
+as the rest of your product. Claude, ChatGPT and Cursor connect to the same door.
+
+<Steps>
+
+<Step title="Run init">
+
+<Note>
+  The MCP door mints its own principals through an OAuth adapter, so it needs an
+  identity to open. Init asks **How do your users sign in?** on every run, and
+  every answer but **None yet** carries that adapter: `authJs()`, `clerk()`,
+  `supabase()`, `auth0()` and `jwt()` all do, and **Write my own** scaffolds a
+  working one for you. Answer **None yet** on this path and init writes nothing
+  at all and exits `1`, naming what to answer instead — so the next run is the
+  whole fix. [Auth](/howto/auth).
+</Note>
+
+<CodeGroup>
+
+```bash npm
+npm install @vendoai/vendo
+npx vendo init
+```
+
+```bash pnpm
+pnpm add @vendoai/vendo
+pnpm exec vendo init
+```
+
+</CodeGroup>
+
+Answer the first question with **From outside agents over MCP** and give init the
+origin your dev server prints. Init writes the door — `mcp: true` — into
+`lib/vendo.ts`, adds the discovery route beside your wire route, and fills
+`.vendo/` with your tool catalog, policy and brand.
+
+</Step>
+
+<Step title="Wire your agent">
+
+`vendo.agentTools` opens the door for one conversation. Pass the incoming
+request and the agent acts as whoever is signed in. This route drives Anthropic
+directly, so it needs its own `ANTHROPIC_API_KEY` in `.env.local` — a Vendo
+Cloud key covers Vendo's own inference, not your loop.
+
+```ts app/api/agent/route.ts focus={2,8,15,20-21}
+import Anthropic from "@anthropic-ai/sdk";
+import { vendo } from "@/lib/vendo";
+
+const anthropic = new Anthropic();
+
+export async function POST(request: Request) {
+  const { task } = await request.json();
+  const door = await vendo.agentTools(request);
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: task }];
+
+  while (true) {
+    const reply = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 4096,
+      tools: door.tools,
+      messages,
+    });
+    messages.push({ role: "assistant", content: reply.content });
+
+    const results = await door.results(reply);
+    if (results.length === 0) return Response.json({ reply, embeds: door.embeds });
+    messages.push({ role: "user", content: results });
+  }
+}
+```
+
+An empty `results` is how the loop knows the model is done. What the agent may
+call, and what a call meets on the way to your API, is in
+[How the door works](/outside-agents/how-the-door-works).
+
+Ship `door.embeds` to the page and render each one:
+
+```tsx app/chat.tsx focus={1,4}
+import { VendoToolResult } from "@vendoai/vendo/react";
+
+// wherever you render the assistant's turn:
+embeds.map((embed, index) => <VendoToolResult key={index} output={embed} />)
+```
+
+Nothing to wrap: the embed finds the wire at `/api/vendo` and rides your host
+session cookie.
+
+</Step>
+
+<Step title="Approvals">
+
+Ask your agent to pay someone and the call parks — a tool nobody has graded needs
+a person. The approval card is one of the embeds, so it renders in your chat:
+approve it there, ask again, and the call runs.
+
+Grade the catalog with `vendo sync --ai` and only the destructive tools keep
+asking.
+
+</Step>
+
+</Steps>
+
+## When you deploy
+
+Two variables on your platform, and the same code:
+
+```bash
+VENDO_BASE_URL=https://app.example.com
+VENDO_API_KEY=vnd_…
+```
+
+`VENDO_BASE_URL` is the public https origin your app answers on — every discovery
+URL derives from it. `VENDO_API_KEY` is the key init already put in `.env.local`,
+and it is the whole setup for your token broker —
+[Service keys & broker](/outside-agents/service-keys-and-broker) is that half.
+
+<svg viewBox="0 0 760 172" role="img" aria-label="Dev on this machine and your deployment run the same code; only where the keys live differs" style={{ width: "100%", height: "auto", margin: "1.5rem 0" }}>
+  <g fill="none" stroke="currentColor" strokeOpacity="0.2">
+    <rect x="1" y="1" width="300" height="56" rx="11" />
+    <rect x="459" y="1" width="300" height="56" rx="11" />
+    <rect x="230" y="114" width="300" height="56" rx="11" />
+  </g>
+  <g fill="none" stroke="#6c3bff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M151 61v29h229v20" />
+    <path d="M609 61v29H380" />
+  </g>
+  <g fill="#6c3bff">
+    <path d="M376 106l4 8 4-8z" />
+  </g>
+  <g fill="currentColor" fontSize="13.5" fontWeight="600" textAnchor="middle">
+    <text x="151" y="26">Dev — this machine</text>
+    <text x="609" y="26">Your deployment</text>
+    <text x="380" y="139">The same code</text>
+  </g>
+  <g fill="currentColor" fillOpacity="0.55" fontSize="11.5" textAnchor="middle">
+    <text x="151" y="45">init wrote .env.local</text>
+    <text x="609" y="45">VENDO_BASE_URL · VENDO_API_KEY</text>
+    <text x="380" y="158">{"createVendo({ mcp: true })"}</text>
+  </g>
+</svg>
+
+## Claude, ChatGPT and Cursor
+
+Your users' setup page ships with the door. Open it in a browser, at the dev
+origin you gave init:
+
+```
+<your dev origin>/api/vendo/mcp/connect
+```
+
+It carries the copy-paste config for each client, and they sign in with your
+app's own login. Claude Code takes two lines:
+
+```
+/plugin marketplace add runvendo/vendo
+/plugin install vendo@vendo
+```
+
+## Make it yours
+
+The setup was the same for everyone. These, in order, make it yours.
+
+<CardGroup cols={3}>
+  <Card title="Wire auth" icon="key" href="/howto/auth">
+    Swap the demo principal for your real sign-in.
+  </Card>
+  <Card title="Add tools" icon="wrench" href="/howto/tools">
+    Point Vendo at your API — the agent gets hands.
+  </Card>
+  <Card title="Approve actions" icon="shield-check" href="/howto/approvals">
+    Decide what runs and what asks first.
+  </Card>
+  <Card title="Generate screens" icon="wand-magic-sparkles" href="/howto/screens">
+    Ask for a view, pin it into your grid.
+  </Card>
+  <Card title="Theme it" icon="palette" href="/howto/theming">
+    Your fonts, colors, and radii on every surface.
+  </Card>
+  <Card title="Set instructions" icon="file-pen" href="/howto/instructions">
+    The brief your agent reads before every turn.
+  </Card>
+</CardGroup>

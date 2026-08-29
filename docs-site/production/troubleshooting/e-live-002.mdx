@@ -1,0 +1,31 @@
+---
+title: "E-LIVE-002"
+sidebarTitle: "E-LIVE-002"
+description: "Retired: doctor no longer fetches /status, so nothing can be unreachable."
+---
+
+```text retired
+E-LIVE-002 — retired, doctor no longer emits this code
+```
+
+`error_code: E-LIVE-002` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when the `/status` fetch got no answer at all, usually
+because nothing was listening at the wire base. Doctor makes no HTTP
+requests now, so nothing can be unreachable.
+
+## The fix
+
+Nothing to do. Doctor gives you the same result with your app stopped.
+
+## Related errors
+
+- [E-WIRE-003](/production/troubleshooting/e-wire-003) — the Next.js catch-all route, checked on disk
+- [E-WIRE-001](/production/troubleshooting/e-wire-001) — the Express `createVendo` wiring, checked on disk

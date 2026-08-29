@@ -1,0 +1,42 @@
+---
+title: "E-MCP-001"
+sidebarTitle: "E-MCP-001"
+description: "Retired: doctor no longer fetches the door's protected-resource metadata over HTTP."
+---
+
+```text retired
+E-MCP-001 — retired, doctor no longer emits this code
+```
+
+`error_code: E-MCP-001` · `status: retired`
+
+## What you're seeing
+
+Nothing: `npx vendo doctor` cannot print this code anymore. You are reading
+it from an older run's output, or a saved report.
+
+## Why
+
+This code fired when the door's OAuth protected-resource document did not
+resolve at its well-known path. Doctor fetched that path over HTTP. It now
+reads files only, so it cannot ask any origin for a document.
+
+## The fix
+
+The document still has to resolve, and you check it yourself now. A door
+mounted at `/api/vendo/mcp` serves its metadata at the path-inserted
+well-known URL, per RFC 9728:
+
+```bash
+curl -s https://your-app.example.com/.well-known/oauth-protected-resource/api/vendo/mcp
+```
+
+A correct response is JSON with a `resource` string. If it 404s, confirm
+`createVendo` gets `mcp: true` (or an `mcp: {...}` object) with a working
+`auth`/`oauth` seam, and that no reverse proxy or catch-all middleware
+swallows the `.well-known` route.
+
+## Related errors
+
+- [E-MCP-009](/production/troubleshooting/e-mcp-009) — the door wired without `VENDO_BASE_URL`, which doctor still catches
+- [E-MCP-004](/production/troubleshooting/e-mcp-004) — `server.json` registry validation, still checked on disk

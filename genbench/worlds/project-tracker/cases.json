@@ -1,0 +1,206 @@
+[
+  {
+    "id": "sprint-board",
+    "lane": "screen",
+    "prompt": "Give me a board for the active sprint — one column per status, the issues as cards inside them, and a way to move a card to another status without leaving the page.",
+    "pass": [
+      "shows one column per status, with the active sprint's issues as cards inside the column their status names",
+      "every card shows the issue's key, its title, who it is assigned to by name, and its points",
+      "shows exactly the nine Sprint 20 issues as cards — CAI-156, CAI-157 and CAI-158 of Sprint 21 and the backlog's CAI-159, CAI-160 and CAI-161 are nowhere on the board",
+      "each card offers a control that moves that issue, and pressing it calls move_issue for the issue on that card"
+    ],
+    "tags": ["action"],
+    "shape": "board"
+  },
+  {
+    "id": "sprint-health",
+    "lane": "screen",
+    "prompt": "How is the current sprint going? I want the one screen I can put up in standup tomorrow.",
+    "pass": [
+      "names Sprint 20 as the active sprint and shows the dates it runs between",
+      "shows 42 points committed and 18 points completed",
+      "shows the work left as 24 points, the difference between those two",
+      "breaks the sprint's issues down by status, including the one blocked issue"
+    ],
+    "tags": ["display"],
+    "shape": "dashboard"
+  },
+  {
+    "id": "burndown-chart",
+    "lane": "screen",
+    "prompt": "Chart the burndown for the active sprint: points remaining each day against the ideal line.",
+    "pass": [
+      "draws a chart with a series for points remaining and a series for the ideal line, not a table of numbers",
+      "every day the tool returned is on the chart, in date order",
+      "the remaining series starts at 42 and ends at 24",
+      "the remaining series sits above the ideal line at the end, so the sprint reads as behind plan"
+    ],
+    "tags": ["display"],
+    "shape": "chart"
+  },
+  {
+    "id": "open-issues",
+    "lane": "screen",
+    "prompt": "Show me every issue that isn't done in one dense table — key, title, status, priority, assignee, points and when it was last updated — most recently updated at the top.",
+    "pass": [
+      "lists all eleven issues that are not done, and none of the done ones",
+      "each row shows the issue's key, title, status, priority, assignee, points and the date it was last updated",
+      "the two unestimated issues show no estimate rather than a zero or an invented number",
+      "the four issues with nobody on them read as unassigned rather than borrowing a teammate's name",
+      "rows run newest first by the update date each row shows — the three Aug 12 issues at the top, CAI-161 of Aug 3 last"
+    ],
+    "tags": ["display"],
+    "shape": "table"
+  },
+  {
+    "id": "estimate-backlog",
+    "lane": "screen",
+    "prompt": "Two things in my backlog still have no estimate. Put them in front of me and let me set the points on each one in one click, from our scale: 2, 3, 5, 8, 13.",
+    "pass": [
+      "shows exactly the two backlog issues that have no estimate, and no other issue",
+      "invents no estimate for either of them",
+      "offers each of them the scale 2, 3, 5, 8 and 13 as one-click choices",
+      "picking a value calls set_estimate with that row's issue and the number of points that was picked"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "release-readiness",
+    "lane": "screen",
+    "prompt": "We want to cut 2026.8 on the 21st. What is still standing in the way?",
+    "pass": [
+      "shows release 2026.8 with its target date of Aug 21 and the teammate who owns it",
+      "shows that 4 of its 7 issues are done",
+      "lists the three unfinished issues — CAI-147, CAI-149 and CAI-151 — with the status each one sits in",
+      "surfaces that CAI-147's checks are failing and its review has been waiting four days",
+      "invents no issue and no release the tools did not return"
+    ],
+    "tags": ["display"],
+    "shape": "detail"
+  },
+  {
+    "id": "cut-release",
+    "lane": "screen",
+    "prompt": "Give me a way to cut release 2026.8 — but make me confirm first, because it can't be undone.",
+    "pass": [
+      "shows what 2026.8 holds before it offers to cut anything — its 7 issues, 4 of them done",
+      "offers a cut control for 2026.8 only, not for the planned releases",
+      "asks for confirmation before the cut fires, rather than firing on the first press",
+      "the confirmation names 2026.8 as the release it would cut, and says the cut cannot be undone"
+    ],
+    "tags": ["action"],
+    "shape": "detail"
+  },
+  {
+    "id": "capacity-rebalance",
+    "lane": "screen",
+    "prompt": "Theo is carrying the pager this sprint and I think he's overloaded. Show me everyone's load against their capacity, and let me hand one of his issues to someone with room.",
+    "pass": [
+      "shows all five teammates with the points they are carrying this sprint against their capacity",
+      "Theo reads as over capacity — 10 points against a capacity of 8",
+      "names CAI-151, Theo's unfinished issue, and offers a control that hands it to another teammate",
+      "handing one over calls assign_issue with one of Theo's issues and the teammate that was picked"
+    ],
+    "tags": ["action"],
+    "shape": "dashboard"
+  },
+  {
+    "id": "review-queue",
+    "lane": "screen",
+    "prompt": "Show me the review queue — who is waiting on whom, longest wait first — and let me kick one back to its author.",
+    "pass": [
+      "lists all three open reviews, longest wait first, so CAI-147 is at the top",
+      "each row names the issue, its author, its reviewer and how long it has been waiting",
+      "the review whose checks are failing is visibly marked as failing",
+      "each row offers a control that sends the issue back, and pressing it calls move_issue for that row's issue"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "quiet-review-queue",
+    "lane": "screen",
+    "prompt": "Show me the review queue — who is waiting on whom, longest wait first.",
+    "pass": [
+      "says nothing is waiting on review rather than drawing an empty table",
+      "invents no review rows and no waiting times",
+      "offers no control that acts on a review"
+    ],
+    "tags": ["display"],
+    "shape": "empty-state",
+    "data": { "list_reviews": { "data": [] } }
+  },
+  {
+    "id": "release-timeline",
+    "lane": "screen",
+    "prompt": "Lay our releases out on a timeline by target date so I can see what's shipping when, and which ones are already late.",
+    "pass": [
+      "lays the four releases out along a run of dates, each one sitting at its own target date — not a table of rows",
+      "places 2026.7 on Jul 31, 2026.8 on Aug 21, 2026.9 on Sep 18 and 2026.10 on Oct 16",
+      "every release reads with its version and the status it is in — shipped, open or planned",
+      "marks nothing as late against the tools' own today of Aug 12: the one target date already behind us belongs to 2026.7, which shipped"
+    ],
+    "tags": ["display"],
+    "shape": "timeline",
+    "source": "Linear — Roadmap Timeline, https://linear.app/docs/timeline"
+  },
+  {
+    "id": "save-issue-filter",
+    "lane": "screen",
+    "prompt": "Let me build my own issue filter — mix status, priority and assignee any way I like — and save it so it's waiting for me next time.",
+    "pass": [
+      "offers a builder that filters on status, priority and assignee, rather than one search box",
+      "each of the three offers the values the issues actually use — the six statuses, the four priorities, and the five teammates by name",
+      "more than one condition can stand at once, rather than one replacing the last",
+      "the save is blocked until the name field holds a name"
+    ],
+    "tags": ["action"],
+    "shape": "filter-builder",
+    "source": "Linear — Advanced filters, https://linear.app/docs/filters"
+  },
+  {
+    "id": "file-bug",
+    "lane": "screen",
+    "prompt": "Open a new bug on the mobile team called 'Board view crashes on iPad' — priority, assignee, estimate — and file it.",
+    "pass": [
+      "shows one form to file a new issue, with a field each for title, team, priority, assignee and estimate",
+      "priority offers urgent, high, medium and low, and assignee offers the five teammates by name",
+      "invents no issue key for the bug before it is filed",
+      "the title field arrives carrying 'Board view crashes on iPad' and the team field the mobile team",
+      "one control files the bug, and filing calls create_issue with the title, team, priority, assignee and estimate the form carries"
+    ],
+    "tags": ["action"],
+    "shape": "form",
+    "source": "Linear — Create issue modal, https://linear.app/docs/creating-issues"
+  },
+  {
+    "id": "release-tree",
+    "lane": "screen",
+    "prompt": "Show me our releases as a tree with their issues nested underneath, collapsed by default, so I can open just the one I'm digging into.",
+    "pass": [
+      "the tree's top rows are the four releases — 2026.7, 2026.8, 2026.9 and 2026.10 — and nothing else sits at that level",
+      "every release starts closed, so no issue row is on screen until one is opened",
+      "each release row carries its status and how many of its issues are done, like 4 of 7 for 2026.8",
+      "each release row's own control opens that release beside or beneath the row it sits on, changing the screen and calling no tool"
+    ],
+    "tags": ["display"],
+    "shape": "tree",
+    "source": "Jira — Epic hierarchy (\"Show Hierarchy\"), https://community.atlassian.com/forums/Jira-questions/List-View-Epic-gt-Task-hierarchy-Expand-Collapse/qaq-p/3241354"
+  },
+  {
+    "id": "my-issues-inbox",
+    "lane": "screen",
+    "prompt": "Put my assigned issues in a list on the left, and let clicking one open its full detail on the right — where I can move its status — without leaving the page.",
+    "pass": [
+      "puts a list of issues down the left and one issue's detail on the right, both on the one screen",
+      "every row in the left list belongs to the same teammate — one person's issues, not the whole team's",
+      "each row's own control opens that issue beside the list without calling a tool, so the detail never lands on a page of its own",
+      "the detail side shows that issue's key, title, status, priority and points",
+      "the detail side offers a status control, and using it calls move_issue for the issue open there"
+    ],
+    "tags": ["action"],
+    "shape": "split-inbox",
+    "source": "Linear — Split Inbox, https://linear.app/docs/inbox"
+  }
+]

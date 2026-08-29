@@ -1,0 +1,215 @@
+[
+  {
+    "id": "spend-overview",
+    "lane": "screen",
+    "prompt": "Show me where my money went this month.",
+    "pass": [
+      "lists all six categories — housing, groceries, dining, subscriptions, transport, coffee — and no others",
+      "shows housing as the largest at $2,850.00 and coffee as the smallest at $61.30",
+      "shows groceries $612.45, dining $438.20, subscriptions $184.41 and transport $96.75"
+    ],
+    "tags": ["display"],
+    "shape": "table"
+  },
+  {
+    "id": "spend-chart",
+    "lane": "screen",
+    "prompt": "Chart my spending by category this month, largest first.",
+    "pass": [
+      "draws a chart of the categories rather than only listing them",
+      "the chart carries a bar or slice for each of the six categories — housing, groceries, dining, subscriptions, transport, coffee",
+      "orders them largest first, housing down to coffee",
+      "shows housing's amount as $2,850.00 and the chart's largest category"
+    ],
+    "tags": ["display"],
+    "shape": "chart"
+  },
+  {
+    "id": "pending-transfers",
+    "lane": "screen",
+    "prompt": "Show my pending transfers and give me a way to cancel one.",
+    "pass": [
+      "lists both pending transfers and neither completed one",
+      "shows each pending transfer's recipient, amount, and date",
+      "offers a cancel control on each pending transfer",
+      "the cancel control targets the transfer it sits on"
+    ],
+    "tags": ["action"],
+    "shape": "table"
+  },
+  {
+    "id": "account-balances",
+    "lane": "screen",
+    "prompt": "Show me all my accounts and what I'm worth in total.",
+    "pass": [
+      "lists all three accounts with name and balance",
+      "shows the credit account's balance as negative",
+      "shows a total equal to the sum of the three balances"
+    ],
+    "tags": ["display"],
+    "shape": "table"
+  },
+  {
+    "id": "no-pending-transfers",
+    "lane": "screen",
+    "prompt": "Show my pending transfers and give me a way to cancel one.",
+    "pass": [
+      "says there are no transfers rather than showing an empty table",
+      "invents no transfer rows",
+      "offers no cancel control"
+    ],
+    "tags": ["display"],
+    "shape": "empty-state",
+    "data": { "list_transfers": { "data": [] } }
+  },
+  {
+    "id": "transfer-receipt",
+    "lane": "screen",
+    "prompt": "Open the transfer to Alex Rivera on its own page like a receipt, and let me cancel it from there if it hasn't gone out yet.",
+    "pass": [
+      "shows the Alex Rivera transfer on its own rather than a list of all four",
+      "shows its amount as $250.00, its date as Aug 1, and that it is still pending",
+      "offers exactly one cancel control on the screen",
+      "pressing cancel fires cancel_transfer with id tr_1"
+    ],
+    "tags": ["action"],
+    "shape": "detail"
+  },
+  {
+    "id": "cancel-both-pending",
+    "lane": "screen",
+    "prompt": "Stop everything I have queued. Show me just the transfers that haven't gone out yet and give me one button that cancels all of them, asking me to confirm first and telling me how many it will cancel.",
+    "pass": [
+      "shows both pending transfers, Alex Rivera $250.00 and Jordan Avery $60.00, and no completed transfer",
+      "offers exactly one cancel button for all of them rather than one per row",
+      "that button says it will cancel 2 transfers, and pressing it asks for confirmation before anything is cancelled",
+      "the confirmation says how many transfers it would cancel rather than asking a bare 'are you sure'"
+    ],
+    "tags": ["action"],
+    "shape": "list-feed"
+  },
+  {
+    "id": "transfer-activity-feed",
+    "lane": "screen",
+    "prompt": "Give me a feed of my transfer activity, newest at the top, grouped under the day it happened.",
+    "pass": [
+      "shows all nine transfers the tool returned, newest first",
+      "groups entries under their day, so the two on Jul 24 and the two on Jul 18 sit together",
+      "each entry shows who it went to and its amount",
+      "marks the two pending entries as pending and the other seven as completed"
+    ],
+    "tags": ["display"],
+    "shape": "timeline",
+    "data": {
+      "list_transfers": {
+        "data": [
+          { "id": "tr_1", "to": "Alex Rivera", "amount": 25000, "date": "2026-08-01", "status": "pending" },
+          { "id": "tr_2", "to": "Jordan Avery", "amount": 6000, "date": "2026-07-30", "status": "pending" },
+          { "id": "tr_3", "to": "Mission St Property", "amount": 285000, "date": "2026-07-28", "status": "completed" },
+          { "id": "tr_4", "to": "Dana Whitfield", "amount": 12550, "date": "2026-07-24", "status": "completed" },
+          { "id": "tr_5", "to": "Sofia Marchetti", "amount": 4500, "date": "2026-07-24", "status": "completed" },
+          { "id": "tr_6", "to": "Alex Rivera", "amount": 25000, "date": "2026-07-18", "status": "completed" },
+          { "id": "tr_7", "to": "Kai Thompson", "amount": 18000, "date": "2026-07-18", "status": "completed" },
+          { "id": "tr_8", "to": "Dana Whitfield", "amount": 12550, "date": "2026-07-06", "status": "completed" },
+          { "id": "tr_9", "to": "Mission St Property", "amount": 285000, "date": "2026-06-28", "status": "completed" }
+        ]
+      }
+    }
+  },
+  {
+    "id": "room-for-dana",
+    "lane": "screen",
+    "prompt": "I want to send Dana Whitfield the same amount I sent her last time. Show me whether checking can cover it after the transfers I already have queued go out.",
+    "pass": [
+      "names the last amount sent to Dana Whitfield as $125.50",
+      "shows the checking balance of $9,412.20 and takes both queued transfers, $250.00 and $60.00, off it",
+      "shows $9,102.20 as what checking holds once they clear",
+      "answers plainly that there is room for the $125.50"
+    ],
+    "tags": ["display"],
+    "shape": "detail"
+  },
+  {
+    "id": "rent-check",
+    "lane": "screen",
+    "prompt": "Did my rent actually go out? Put the housing line from my spending next to the transfer that paid it — the transfer, not the bill — so I can see they match.",
+    "pass": [
+      "shows the housing spending amount as $2,850.00",
+      "shows the Mission St Property transfer of $2,850.00 and that it completed",
+      "presents the two as one comparison block and says the amounts match",
+      "stays on that comparison rather than becoming a full spending breakdown or a full transfer list"
+    ],
+    "tags": ["display"],
+    "shape": "comparison"
+  },
+  {
+    "id": "bills-calendar",
+    "lane": "screen",
+    "prompt": "Show me every bill and subscription this month — including the ones already paid or missed — laid out like a calendar so I can see which days they hit.",
+    "pass": [
+      "lays the month out as a calendar grid rather than a list of bills",
+      "puts each of the six bills on its due day — Aug 1, Aug 5, Aug 9, Aug 12, Aug 18 and Aug 24",
+      "shows each bill's name and amount, Mission St Rent at $2,850.00 down to Verdant Streaming at $15.99",
+      "marks Ridgeline Gym missed, Mission St Rent and Onyx Fiber paid, and the other three upcoming"
+    ],
+    "tags": ["display"],
+    "shape": "calendar",
+    "source": "Monarch — Recurring bills calendar, https://help.monarch.com/hc/en-us/articles/4890751141908-Tracking-Recurring-Expenses-and-Bills"
+  },
+  {
+    "id": "money-dashboard",
+    "lane": "screen",
+    "prompt": "Give me one screen with my net worth, my account balances and what I've spent this month.",
+    "pass": [
+      "shows net worth as $36,265.15, the three balances summed",
+      "lists all three accounts with name and balance, Maple Credit's as negative",
+      "shows this month's spending with housing largest at $2,850.00 and a total of $4,243.11",
+      "carries net worth, accounts and spending as three blocks on the one screen, not just one of them"
+    ],
+    "tags": ["display"],
+    "shape": "dashboard",
+    "source": "Monarch — Main dashboard, https://screensdesign.com/showcase/monarch-budget-track-money"
+  },
+  {
+    "id": "dining-budget-cap",
+    "lane": "screen",
+    "prompt": "Let me set a monthly cap on my dining spending so I stop going over.",
+    "pass": [
+      "shows a form for dining's cap rather than a breakdown of every category",
+      "prefills dining's current cap of $400.00 and shows $438.20 already spent against it",
+      "says dining is over its cap",
+      "saving fires set_budget with category dining and the entered limit_cents"
+    ],
+    "tags": ["action"],
+    "shape": "form",
+    "source": "Monarch — Budget creation, https://screensdesign.com/showcase/monarch-budget-track-money"
+  },
+  {
+    "id": "category-groups",
+    "lane": "screen",
+    "prompt": "Show me how my spending categories are organized into groups, so I can see what rolls up into what.",
+    "pass": [
+      "nests the six categories under their groups rather than showing one flat list",
+      "shows Food & Drink holding groceries, dining and coffee, and Home holding housing alone",
+      "shows each category's amount, housing $2,850.00 down to coffee $61.30",
+      "rolls Food & Drink's three categories up to $1,111.95"
+    ],
+    "tags": ["display"],
+    "shape": "tree",
+    "source": "Monarch — Categories & groups, https://help.monarch.com/hc/en-us/articles/360048883771-Creating-Custom-Categories-and-Groups"
+  },
+  {
+    "id": "savings-goals",
+    "lane": "screen",
+    "prompt": "Show me the savings goals I've got going and how close each one is to done.",
+    "pass": [
+      "shows all three goals as cards side by side rather than table rows",
+      "shows each goal's saved amount against its target, Emergency Fund $7,420.00 of $10,000.00",
+      "carries a progress bar or percentage on each — Emergency Fund about 74%, Japan Trip 25%, New Laptop 100%",
+      "marks New Laptop as fully funded"
+    ],
+    "tags": ["display"],
+    "shape": "board",
+    "source": "Monarch — Goals / Revolut — Pockets, https://screensdesign.com/showcase/monarch-budget-track-money"
+  }
+]

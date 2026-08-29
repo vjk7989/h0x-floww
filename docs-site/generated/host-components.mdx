@@ -1,0 +1,176 @@
+---
+title: "Host components"
+description: "Register your own React components so generated screens render your real UI, what vendo sync captures, and what a capture cannot carry."
+sidebarTitle: "Host components"
+---
+
+Register a component and a generated screen can name it. What you register is a closed contract, so a name a screen renders is a name your product really has.
+
+## Register your components
+
+One object, keyed by component name, under one name at both ends: `createVendo({ components })` on the server and `<VendoProvider components>` in the browser take the same object.
+
+```ts vendo.ts focus={9-14,18}
+import { createVendo } from "@vendoai/vendo/server";
+import type { ComponentRegistry } from "@vendoai/vendo";
+import { z } from "zod";
+import { SpendingDonut } from "@/components/charts/spending-donut";
+
+const registry = {
+  MapleSpendingDonut: {
+    component: SpendingDonut,
+    description: "Category breakdown of spending. Use for where-did-my-money-go requests.",
+    props: z.object({
+      slices: z.array(z.object({ category: z.string(), amount: z.number() })),
+      size: z.number().default(200),
+    }),
+    examples: ['{"slices":[{"category":"dining","amount":34218}],"size":200}'],
+  },
+} satisfies ComponentRegistry;
+
+const vendo = createVendo({ components: registry });
+```
+
+* `description` is selection guidance. Say what the component shows and when to reach for it.
+* `props` validates at render and derives the model-facing JSON Schema. One schema, never two.
+* `examples` are JSON prop objects the model copies from, and they draw the console's preview.
+
+<Warning>
+  Copy prop names from the component's source, never from convention. If `SpendingDonut` takes `slices`, the schema says `slices`, not `data`.
+
+  Prop invention is the single most observed agent failure, and a schema is what makes it impossible.
+</Warning>
+
+Registering a component lets a screen render it. Letting a user *change* one is a different wrapper, in [import & fork](/generated/import-and-fork).
+
+## What a screen may name
+
+<Frame caption="A name outside these two sets fails the save. It never renders as an empty box.">
+  <svg viewBox="0 0 700 118" width="100%" role="img" aria-label="A generated screen may name the Kit's 50 components plus the components this host registered, and nothing else.">
+    <rect x="1" y="1" width="330" height="72" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="166" y="27" fontSize="8" letterSpacing="1.2" textAnchor="middle" fill="currentColor" fillOpacity="0.55">SHIPPED WITH VENDO</text>
+    <text x="166" y="48" fontSize="14" fontWeight="600" textAnchor="middle" fill="currentColor">the Kit</text>
+    <text x="166" y="64" fontSize="11" textAnchor="middle" fill="currentColor" fillOpacity="0.55">50 components, themed by your tokens</text>
+    <text x="350" y="43" fontSize="18" fontWeight="500" textAnchor="middle" fill="currentColor" fillOpacity="0.35">+</text>
+    <rect x="369" y="1" width="330" height="72" rx="10" fill="#6c3bff" fillOpacity="0.08" stroke="#6c3bff" strokeOpacity="0.35" />
+    <text x="534" y="27" fontSize="8" letterSpacing="1.2" textAnchor="middle" fill="#6c3bff" fillOpacity="0.8">SHIPPED WITH YOUR PRODUCT</text>
+    <text x="534" y="48" fontSize="14" fontWeight="600" textAnchor="middle" fill="#6c3bff">your catalog</text>
+    <text x="534" y="64" fontSize="11" textAnchor="middle" fill="#6c3bff" fillOpacity="0.75">the ones you registered, with their schemas</text>
+    <line x1="350" y1="74" x2="350" y2="88" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <rect x="212" y="88" width="276" height="29" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="350" y="107" fontSize="11" fontWeight="600" textAnchor="middle" fill="currentColor">everything a screen may render</text>
+  </svg>
+</Frame>
+
+The Kit is one family, and every component in it reads your [theme tokens](/howto/theming).
+
+| Family | Components |
+| --- | --- |
+| Layout | `Stack` `Row` `Grid` `SplitPane` `Surface` `Card` `Divider` |
+| Values | `Text` `EnumBadge` `Icon` |
+| Data | `DataTable` `TableRow` `CardList` `Calendar` `Stat` `Badge` `KeyValue` `Timeline` `Avatar` `CodeBlock` |
+| Charts | `LineChart` `BarChart` `DonutChart` `Sparkline` `Progress` |
+| Forms | `Input` `Select` `DatePicker` `Textarea` `Checkbox` `Switch` `Radio` `Slider` `SegmentedControl` `Combobox` `DateRange` `Button` `Link` `Form` `Disclaimer` |
+| Feedback | `Tabs` `Callout` `Accordion` `Menu` `Tooltip` `EmptyState` `Steps` |
+| Overlays | `Modal` `Sheet` `Toast` |
+
+There is no value-formatting tier: format a figure with `Intl` in the screen's own code and hand the result to a `<Text>`. There is no `Skeleton` either, and `DataTable` is the only table. It sorts, filters, searches, paginates, resolves dot-path keys, and formats each cell.
+
+## What `vendo sync` captures
+
+Two artifacts, both deterministic and byte-stable. Commit them.
+
+<Frame caption="catalog.json is what your components are called. .vendo/components/ is what they are.">
+  <svg viewBox="0 0 700 128" width="100%" role="img" aria-label="Your provider's components map feeds catalog.json for names and .vendo/components/ for source, split into per-component records and content-addressed modules.">
+    <rect x="1" y="34" width="182" height="60" rx="10" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="92" y="60" fontSize="8" letterSpacing="1.2" textAnchor="middle" fill="currentColor" fillOpacity="0.55">YOUR SOURCE</text>
+    <text x="92" y="78" fontSize="11" fontWeight="600" textAnchor="middle" fill="currentColor">&lt;VendoProvider components&gt;</text>
+    <line x1="183" y1="64" x2="222" y2="64" stroke="#6c3bff" strokeOpacity="0.4" strokeWidth="1.5" />
+    <path d="M232 64 l-10 -5 v10 z" fill="#6c3bff" fillOpacity="0.6" />
+    <text x="207" y="52" fontSize="9" textAnchor="middle" fill="#6c3bff">sync</text>
+    <rect x="232" y="1" width="200" height="54" rx="10" fill="#6c3bff" fillOpacity="0.08" stroke="#6c3bff" strokeOpacity="0.35" />
+    <text x="332" y="24" fontSize="11" fontWeight="600" textAnchor="middle" fill="#6c3bff">.vendo/catalog.json</text>
+    <text x="332" y="42" fontSize="10" textAnchor="middle" fill="#6c3bff" fillOpacity="0.75">names, prop schemas, examples</text>
+    <rect x="232" y="73" width="200" height="54" rx="10" fill="#6c3bff" fillOpacity="0.08" stroke="#6c3bff" strokeOpacity="0.35" />
+    <text x="332" y="96" fontSize="11" fontWeight="600" textAnchor="middle" fill="#6c3bff">.vendo/components/</text>
+    <text x="332" y="114" fontSize="10" textAnchor="middle" fill="#6c3bff" fillOpacity="0.75">the real source, content addressed</text>
+    <line x1="432" y1="100" x2="471" y2="100" stroke="currentColor" strokeOpacity="0.3" />
+    <path d="M481 100 l-10 -5 v10 z" fill="currentColor" fillOpacity="0.4" />
+    <rect x="481" y="66" width="218" height="26" rx="7" fill="none" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="590" y="83" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">&lt;Name&gt;.json, refs only</text>
+    <rect x="481" y="98" width="218" height="26" rx="7" fill="none" stroke="currentColor" strokeOpacity="0.22" />
+    <text x="590" y="115" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">modules/&lt;hex&gt;.json, the bytes</text>
+  </svg>
+</Frame>
+
+`catalog.json` is what your components are called: names, prop schemas, descriptions, examples. A re-scan keeps description and example copy you edited by hand.
+
+`components/` is what they are. Source is stored once per module and referenced by content hash, so a `format-currency.ts` that ten components import is stored once. [The `.vendo` directory](/reference/dot-vendo) has every path.
+
+### Where the walk stops
+
+The import walk follows your own code to closure with no depth limit, and stops at exactly two lines: anything resolving into `node_modules`, and 256 KB of source per component across the whole closure.
+
+Three packages are bundled into the sandbox itself, because they blocked almost everything and are tiny.
+
+| Bundled | What you get |
+| --- | --- |
+| `clsx` | The real package, pinned `2.1.1` |
+| `tailwind-merge` | The real package, pinned `3.6.0` |
+| `zod` | A zod-shaped shim for declaring schemas |
+
+<Note>
+  **The bundled `zod` is a shim, not zod.** It resolves the declaration surface so your module loads, which is all a registry's `props:` schema needs.
+
+  It does not validate. `.parse()` and `.safeParse()` throw a named `ZodShimError` rather than returning a plausible wrong value.
+</Note>
+
+### When a component cannot be captured
+
+Sync never goes quiet. The record on disk carries a machine-readable `skipped.reason` plus a sentence you can read.
+
+| `skipped.reason` | Meaning |
+| --- | --- |
+| `too-large` | The closure is over the 256 KB budget, and the record names the biggest module |
+| `unsupported-imports` | The closure imports specifiers the sandbox cannot resolve, and the record names each one |
+| `no-default-export` | Registered as a module's default export, but the module has none |
+| `default-export-conflict` | The module default-exports something else, so the registered binding cannot become the default |
+| `in-package` | Declared inside `node_modules` |
+| `no-named-declaration` | The registered value has no name to re-export |
+
+A component that could not be read at all this run is a different case. Sync leaves the previous capture exactly as it was and moves on.
+
+## How a preview draws
+
+A preview has no data plane, so every query resolves to an empty list. Sync fills it from what you have already written, down three rungs.
+
+<Steps>
+  <Step title="Your examples">
+    The first `examples` string that parses to a JSON object wins. A human's example is real product data, and it reads better than anything Vendo could invent.
+  </Step>
+  <Step title="Generated from your props schema">
+    Values synthesized from the schema: typed correctly, respecting enums, `min`, `max`, string formats, and optionality. Plausible rather than pretty.
+  </Step>
+  <Step title="An honest label">
+    With neither, the capture records `noSampleProps` with a reason. The component still renders in your product, and previews as a labeled placeholder.
+  </Step>
+</Steps>
+
+Generated values are seeded from the component's name and each property path, so the same schema always produces the same values and your committed `.vendo/components/` never churns. Sample props travel with the capture, so keep them realistic and non-sensitive.
+
+## Sending the corpus to Cloud
+
+Sync asks once per project whether your component source may go to Vendo Cloud, so the console can render your real components instead of grey placeholders. It commits your answer.
+
+```json .vendo/cloud.json
+{ "pushComponents": true }
+```
+
+| Crosses the wire | Never crosses |
+| --- | --- |
+| The source of every component you register | Package code |
+| The source of every module in its import closure | Anything outside your project root |
+| Your app-root stylesheets | Environment variables |
+| The sample props the preview draws with | Live data |
+
+In CI, pass `--push-components` or `--no-push-components`. [The CLI reference](/reference/cli#vendo-sync) has every sync flag.

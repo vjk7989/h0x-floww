@@ -1,0 +1,82 @@
+# GitLeaks config for the secret-scanning job in .github/workflows/security-scan.yml.
+# It extends the stock ruleset and only ever SUBTRACTS from it — no rules are
+# authored here, so an upstream rule improvement lands for free.
+[extend]
+useDefault = true
+
+# Test and fixture code is full of deliberately fake credentials: negative tests
+# that assert a live-looking key is refused, e2e journeys handing a stub server a
+# made-up bearer token, corpus manifests of sample env vars. Every one of the 74
+# hits in this repo's history was of that kind (triaged 2026-08-26; none real).
+# Without this, adding a test fixture turns the job red, and a gate that cries
+# wolf is a gate people learn to ignore.
+#
+# targetRules is the important half. These are the only two rules that have ever
+# produced a false positive here, and naming them keeps every HIGH-confidence
+# rule — aws-access-token, github-pat, openai, slack, gcp — armed inside test
+# files. Pasting a real key into a test to debug it is one of the likeliest ways
+# a credential ever leaks, so that is the last place to stop looking.
+[[allowlists]]
+description = "Deliberately fake credentials in tests, fixtures and the corpus"
+targetRules = ["generic-api-key", "stripe-access-token"]
+paths = [
+  '''(^|/)tests?/''',
+  '''\.test\.[cm]?[jt]sx?$''',
+  '''\.live\.test\.[cm]?[jt]sx?$''',
+  '''^fixtures/''',
+  '''^corpus/''',
+]
+
+# Two more rules the cloud half's own history trips on: broker deploy tests that
+# generate throwaway key material, and curl examples carrying a placeholder
+# Authorization header. Test and fixture paths only, exactly as vendo-web scoped
+# these two before the merge — a whole-tree `^cloud/` suppresses a real key
+# pasted into cloud/console/lib, which is the case this scan exists for. Anchored
+# on ^cloud/ so it is inert in the public repo, which has no cloud/ — a private
+# key pasted into a packages/ test is still a finding there and here.
+# (`cloud/` is Vendo Cloud's closed source; it has no files in this repo.)
+[[allowlists]]
+description = "Deliberately fake key material and curl headers in the cloud half"
+targetRules = ["private-key", "curl-auth-header"]
+paths = [
+  '''^cloud/(.*/)?tests?/''',
+  '''^cloud/(.*/)?fixtures?/''',
+  '''^cloud/.*\.test\.[cm]?[jt]sx?$''',
+]
+
+# The one non-test hit the narrowing above exposes: the litellm README's local
+# smoke check calls localhost:4000 with an `sk-local-*` placeholder. Scoped to
+# the rule, the file and the expression together (condition = "AND"), so a real
+# bearer token pasted anywhere in this same file still fires.
+# (`cloud/` is Vendo Cloud's closed source; it has no files in this repo.)
+[[allowlists]]
+description = "litellm README smoke check uses an sk-local-* placeholder"
+condition = "AND"
+targetRules = ["curl-auth-header"]
+paths = ['''^cloud/services/litellm/README\.md$''']
+regexTarget = "match"
+regexes = ['''Bearer sk-local-''']
+
+# A PostHog project key is the CLIENT-side ingest key: it ships inside the
+# browser bundle by design and can only write events. Public by construction,
+# so it is not a leak — and it is checked in deliberately, in several places.
+[[allowlists]]
+description = "PostHog project (client-side ingest) API keys are public by design"
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = ['''phc_[A-Za-z0-9]{32,}''']
+
+# The E2B backend selection reads its key from the environment — there is no
+# literal here, and never was in the file's history. gitleaks' capture group
+# lands on the ENV VAR NAME, which clears the length and entropy bars on its
+# own. Triaged 2026-08-28: false positive, nothing to rotate. Scoped to the
+# rule, the file and the expression together (condition = "AND"), so a real
+# literal pasted anywhere in this same file still fires.
+# (`cloud/` is Vendo Cloud's closed source; it has no files in this repo.)
+[[allowlists]]
+description = "E2B backend selection reads E2B_API_KEY from the environment"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''cloud/console/lib/broker/index\.ts$''']
+regexTarget = "match"
+regexes = ['''apiKey:\s*env\.E2B_API_KEY''']
