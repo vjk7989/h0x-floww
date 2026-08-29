@@ -142,7 +142,7 @@ export async function POST(req: Request) {
 Three things are doing work there.
 
 - **`user.id` is the subject.** Every thread, every workspace file, and every
-  audit row is scoped to it, and Vendo mints no identity of its own.
+  audit row is scoped to it, and h0x-flow mints no identity of its own.
 - **`headers: req.headers`** forwards the caller's own credentials, so a tool
   call reaches your API as the person signed in rather than as the agent.
 - **`user`** is server-trusted identity the model may read, printed as `[User]`
@@ -164,7 +164,7 @@ back on the next turn.
 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "stretch", gap: 10, margin: "1.25rem 0" }}>
   <div style={{ flex: "1 1 180px", border: "1px solid #e9e6f1", borderRadius: 10, padding: "11px 13px", background: "#fdfcff" }}>
     <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#a8a5b4", marginBottom: 5 }}>Turn 1</div>
-    <div style={{ fontSize: 13, color: "#4b4857" }}>No thread id in the body. Vendo mints one.</div>
+    <div style={{ fontSize: 13, color: "#4b4857" }}>No thread id in the body. h0x-flow mints one.</div>
   </div>
   <div style={{ flex: "1 1 180px", border: "1px solid #ddd0ff", borderRadius: 10, padding: "11px 13px", background: "#f5f1ff" }}>
     <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "#6c3bff", marginBottom: 5 }}>Response</div>

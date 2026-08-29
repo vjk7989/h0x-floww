@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "almond",
-  "name": "Vendo",
+  "name": "h0x-flow",
   "description": "Embed an agent in your product that lets every customer automate their work, build their own views, and connect their tools, inside your brand and your guardrails.",
   "appearance": {
     "default": "light"

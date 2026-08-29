@@ -51,7 +51,7 @@ screens use your brand font where your own stylesheet does not reach.
 | Prop | What it does |
 | --- | --- |
 | `baseUrl` | The wire mount, path prefix included. Default `/api/vendo`. |
-| `theme` | Your brand tokens, merged over Vendo's defaults. |
+| `theme` | Your brand tokens, merged over h0x-flow's defaults. |
 | `components` | Your own React components the agent may render. See [host components](/generated/host-components). |
 | `tools` | Labels and field formatting for tool chips and approval cards. |
 | `routes` · `onNavigate` | Your pages by name, and your router doing the moving when a generated link is pressed. |
@@ -108,7 +108,7 @@ page behind it inert.
 <Frame caption="The default placement. Maple's home is still there, dimmed and out of reach behind the panel.">
   <img
     src="/images/maple/panel-on-home.png"
-    alt="Maple's home page dimmed behind a centered Vendo panel, which holds a generated spending by category screen with the month's total and a bar for each category"
+    alt="Maple's home page dimmed behind a centered h0x-flow panel, which holds a generated spending by category screen with the month's total and a bar for each category"
     width="1280"
     height="900"
   />
@@ -147,7 +147,7 @@ const overlay = useVendoOverlay();
 The `thread` prop swaps in your own thread component. The overlay stays the
 shell: portal, scrim, focus, and the mobile sheet.
 
-Vendo binds no keyboard shortcut of its own — your app keeps every chord it
+h0x-flow binds no keyboard shortcut of its own — your app keeps every chord it
 already owns. For a `⌘K`, hand your own listener `overlay.toggle`.
 
 <Frame caption="With no conversation yet, the panel opens compact.">
@@ -221,7 +221,7 @@ dashboard** and it lands there. With several, the same button becomes an
 ## Tool labels
 
 Every tool call renders a chip, and a call that needs a decision renders an
-approval card. Without configuration Vendo prettifies the raw id, so
+approval card. Without configuration h0x-flow prettifies the raw id, so
 `host_email_send` reads as "Email send".
 
 Pass your own copy through the provider's `tools` prop.

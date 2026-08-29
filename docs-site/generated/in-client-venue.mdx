@@ -84,7 +84,7 @@ A baseline that has since moved is flagged `drifted`. The diff still returns and
 
 ## Minting an approval
 
-Vendo Cloud's review console mints approvals in production. On your own server the call is one line, and `approvedBy` is required because the record names who reviewed.
+h0x-flow Cloud's review console mints approvals in production. On your own server the call is one line, and `approvedBy` is required because the record names who reviewed.
 
 ```ts focus={1}
 await vendo.apps.inClient.approve({ appId, approvedBy: reviewerId }, ctx);

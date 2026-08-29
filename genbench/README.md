@@ -2,7 +2,7 @@
 
 Answers "why not build this in-house?" with numbers.
 
-It runs hand-written prompts through five contenders — the real Vendo pipeline,
+It runs hand-written prompts through five contenders — the real h0x-flow pipeline,
 two raw-Claude baselines, a rival coding agent and one bought product — against
 fourteen fictional products defined entirely in JSON, scores what comes back, and
 measures time and money. The three Claude contenders get the same model, the same

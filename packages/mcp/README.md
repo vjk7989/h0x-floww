@@ -1,6 +1,6 @@
 # @vendoai/mcp
 
-`@vendoai/mcp` is Vendo's door: one fetch-style handler that exposes a host's guard-bound tools to MCP clients, owns the OAuth 2.1 + PKCE flow, and optionally carries saved Vendo apps as MCP Apps.
+`@vendoai/mcp` is h0x-flow's door: one fetch-style handler that exposes a host's guard-bound tools to MCP clients, owns the OAuth 2.1 + PKCE flow, and optionally carries saved h0x-flow apps as MCP Apps.
 
 The umbrella package wires it behind the one-flag setup, `createVendo({ mcp: true })`, so the same tool registry, guard policy, approvals, and audit trail apply to MCP calls as to in-product calls.
 

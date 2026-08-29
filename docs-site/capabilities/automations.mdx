@@ -223,7 +223,7 @@ with `openssl rand -base64 32` and set it for both halves.
 
 ### The impersonation guard
 
-Before invoking `actAs`, Vendo compares the grant's subject to the running
+Before invoking `actAs`, h0x-flow compares the grant's subject to the running
 principal's. On a mismatch the call fails closed with `act-as-subject-mismatch`
 and no outbound request is made. You do not wire this; it applies on every
 preset, and every attempt is audited with its disposition: `minted`, `declined`,

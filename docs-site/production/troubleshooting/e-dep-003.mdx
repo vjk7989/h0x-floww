@@ -1,7 +1,7 @@
 ---
 title: "E-DEP-003"
 sidebarTitle: "E-DEP-003"
-description: "Doctor found an installed zod older than 3.25, which breaks the build the moment Vendo's wiring pulls in the AI SDK."
+description: "Doctor found an installed zod older than 3.25, which breaks the build the moment h0x-flow's wiring pulls in the AI SDK."
 ---
 
 ```text deps/zod-floor
@@ -26,7 +26,7 @@ buried inside `ai`.
 `ai@6` imports the `zod/v3` and `zod/v4` subpaths, which first ship in zod
 3.25. When your app pins an older zod, usually a common `^3.2x` range that
 resolves below 3.25, that pin wins the installed tree, and the build breaks
-the moment Vendo's wiring pulls `ai` into the bundle.
+the moment h0x-flow's wiring pulls `ai` into the bundle.
 
 ## The fix
 

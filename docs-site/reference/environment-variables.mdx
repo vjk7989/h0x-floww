@@ -1,24 +1,24 @@
 ---
 title: "Environment variables"
 sidebarTitle: "Environment variables"
-description: "Every environment variable a Vendo host sets, what each one does, and where it belongs: the host process and the auth presets."
+description: "Every environment variable a h0x-flow host sets, what each one does, and where it belongs: the host process and the auth presets."
 ---
 
 Every variable a host developer sets. Keys are credentials; config selects.
 
 `VENDO_API_KEY` is the one variable that fills an adapter slot you left unset. Every other key here authenticates something you already chose in `createVendo`.
 
-Two of these are URLs that get swapped: `VENDO_BASE_URL` is *your* app's public URL, `VENDO_CONSOLE_URL` is the Vendo console's.
+Two of these are URLs that get swapped: `VENDO_BASE_URL` is *your* app's public URL, `VENDO_CONSOLE_URL` is the h0x-flow console's.
 
 ## Host process
 
 | Variable | What it does | Set where |
 | --- | --- | --- |
-| `VENDO_API_KEY` | Authenticates Vendo Cloud; fills any adapter slot you left unset. | `.env.local`, written by init |
+| `VENDO_API_KEY` | Authenticates h0x-flow Cloud; fills any adapter slot you left unset. | `.env.local`, written by init |
 | `VENDO_BASE_URL` | The origin this process answers on: the dev origin locally, the deployment's full public URL, path prefix included, in production. | deploy platform · `.env.local` in dev, written by init from its dev-URL question |
 | `VENDO_MCP_BROKER_URL` | Your tenant's broker endpoint; setting it turns on broker mode. | deploy platform |
 | `VENDO_MCP_FEDERATION_SECRET` | Secret a broker signs its login-federation handshake with. | deploy platform |
-| `VENDO_CONSOLE_URL` | The Vendo console's origin — overrides it for runtime and CLI. Default `https://console.vendo.run`. Formerly `VENDO_CLOUD_URL`, which still works; the new name wins when both are set, and the first read of the old one logs a one-line pointer to the new name. | deploy platform |
+| `VENDO_CONSOLE_URL` | The h0x-flow console's origin — overrides it for runtime and CLI. Default `https://console.vendo.run`. Formerly `VENDO_CLOUD_URL`, which still works; the new name wins when both are set, and the first read of the old one logs a one-line pointer to the new name. | deploy platform |
 | `VENDO_TELEMETRY_DISABLED=1` | Disables build and development telemetry. | shell or CI |
 | `VENDO_TICK_SECRET` | The secret `POST /tick` checks both its credentials against. Overrides the one a Cloud key derives; required without a key. | deploy platform |
 | `VENDO_HOST_API_URL` | The host API's base when it answers on another origin. | deploy platform |
@@ -62,13 +62,13 @@ Two of these are URLs that get swapped: `VENDO_BASE_URL` is *your* app's public 
 
   Either one alone is enough to stop plaintext: with the key set, secrets are
   encrypted whatever `NODE_ENV` says; with `NODE_ENV=production` and no key, the
-  store refuses to write a secret rather than writing it in the clear. Vendo
+  store refuses to write a secret rather than writing it in the clear. h0x-flow
   Cloud's hosted store is unaffected — this is the local store only.
 </Warning>
 
 ## Auth presets
 
-Each preset reads its vendor's own variables rather than a Vendo-named one.
+Each preset reads its vendor's own variables rather than a h0x-flow-named one.
 
 | Preset | Variables |
 | --- | --- |
@@ -82,4 +82,4 @@ Each preset reads its vendor's own variables rather than a Vendo-named one.
   `vendo init` writes the local ones. `VENDO_API_KEY` and `VENDO_SERVICE_KEY` land in `.env.local`. Every other value is yours to set, production ones on your deploy platform.
 </Note>
 
-Vendo also reads internal test seams and harness markers. They are not contract and can change without notice.
+h0x-flow also reads internal test seams and harness markers. They are not contract and can change without notice.

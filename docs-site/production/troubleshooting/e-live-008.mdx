@@ -23,7 +23,7 @@ named families, so there is nothing left to warn about.
 
 ## The fix
 
-Move every `records.*` call to the family that owns the data. Vendo's own
+Move every `records.*` call to the family that owns the data. h0x-flow's own
 collections go through `engine.*`; an app's own rows live in the app's own SQL
 database, reached with the `vendo_apps_sql` tool.
 

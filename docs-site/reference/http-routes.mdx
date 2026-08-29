@@ -1,7 +1,7 @@
 ---
 title: "HTTP routes"
 sidebarTitle: "HTTP routes"
-description: "Every HTTP route the Vendo wire mounts under /api/vendo: method, body, response, and what authenticates it."
+description: "Every HTTP route the h0x-flow wire mounts under /api/vendo: method, body, response, and what authenticates it."
 ---
 
 The base path is the fixed constant `/api/vendo`. Bodies are core types encoded as JSON; conversation turns stream over SSE.
@@ -94,7 +94,7 @@ Mounted unless `automations: false`.
 | `/runs/:id` | GET | one `RunRecord`, or `404` |
 | `/runs/:id/stop` | POST | `{}` |
 | `/runs/:id/rerun` | POST | `{ runId }`, a fresh run of the same automation on the same event |
-| `/tick` | POST | the wake signal. Empty body. Auth is `Authorization: Bearer <VENDO_TICK_SECRET>` **or** a standard-webhooks signature (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which is what Vendo Cloud's heartbeat sends; neither valid → `401`. Answers `202 { fired: n }`. Idempotent — a duplicate call claims no cursor and answers `{ fired: 0 }` |
+| `/tick` | POST | the wake signal. Empty body. Auth is `Authorization: Bearer <VENDO_TICK_SECRET>` **or** a standard-webhooks signature (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which is what h0x-flow Cloud's heartbeat sends; neither valid → `401`. Answers `202 { fired: n }`. Idempotent — a duplicate call claims no cursor and answers `{ fired: 0 }` |
 | `/webhooks/:source` | POST | external delivery. Verified per RECORD against that record's own HMAC key, and deduped by (automation, delivery id). `source` must equal the record's `connector` exactly |
 
 `:id` is the automation's id (`atm_…`). There is no trigger segment: an
@@ -124,7 +124,7 @@ There is no wire-hosted connector OAuth callback. The broker owns the redirect, 
 
 `blocks` reports `store`, `agent`, `actions`, `guard`, `apps`, `automations`, plus `sandbox` (`"e2b"`, `"cloud"`, `"custom"`, or `false`), `model` (`"custom"` or `"ladder"`), `mcp` (`"local"`, `"broker"`, or `false`), and `connections` (`"byo"`, `"cloud"`, or `false`).
 
-Organizations are a [Vendo Cloud](/production/vendo-cloud) capability. The `/orgs` family refuses before any principal resolution, and an `?org=<orgId>` query parameter or `body.org` on `/approvals` or `/grants` refuses the same way.
+Organizations are a [h0x-flow Cloud](/production/vendo-cloud) capability. The `/orgs` family refuses before any principal resolution, and an `?org=<orgId>` query parameter or `body.org` on `/approvals` or `/grants` refuses the same way.
 
 ## Development routes
 

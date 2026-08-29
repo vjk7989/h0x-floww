@@ -1,6 +1,6 @@
 # Relay Express host
 
-Relay is the permanent non-Next corpus host for Vendo. It proves that the
+Relay is the permanent non-Next corpus host for h0x-flow. It proves that the
 `@vendoai/vendo` server is a framework-agnostic fetch handler by mounting it on
 Express, while a plain Vite React SPA consumes the same wire through
 `<VendoProvider>` and the stock `VendoOverlay` chrome.
@@ -34,6 +34,6 @@ pnpm test
 
 [`src/server/fetch-adapter.ts`](src/server/fetch-adapter.ts) is intentionally
 host-owned integration code. It turns Node's `IncomingMessage` into a WHATWG
-`Request`, calls Vendo's portable handler, and pipes the WHATWG `Response` body
+`Request`, calls h0x-flow's portable handler, and pipes the WHATWG `Response` body
 back to Node with backpressure. The response is streamed rather than buffered,
 which keeps `POST /api/vendo/threads` SSE incremental.

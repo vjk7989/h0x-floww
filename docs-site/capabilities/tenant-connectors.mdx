@@ -25,7 +25,7 @@ flowchart LR
   class REG vendo
 ```
 
-There is no Vendo-hosted UI here. The API is server-side, and the screen around it is yours.
+There is no h0x-flow-hosted UI here. The API is server-side, and the screen around it is yours.
 
 ## Registering
 
@@ -79,7 +79,7 @@ await vendo.tenantConnectors.register({
 
 ## How you wire it
 
-The screen is yours and so is the route behind it. Vendo supplies the registration API and nothing else — who may administer an org is a question your own auth answers.
+The screen is yours and so is the route behind it. h0x-flow supplies the registration API and nothing else — who may administer an org is a question your own auth answers.
 
 Start with a form that has no `org` field, because the org is not the browser's to name:
 
@@ -165,7 +165,7 @@ See [Orgs & memberships](/users-orgs/orgs-and-memberships) for the rest of that 
 
 ## Who sees what
 
-Visibility follows the orgs your host asserts for the request — the same `memberships` seam the rest of Vendo reads. A run that asserts `acme` is served a registry carrying your tools plus Acme's; a run that asserts nothing is served the shared registry, unchanged.
+Visibility follows the orgs your host asserts for the request — the same `memberships` seam the rest of h0x-flow reads. A run that asserts `acme` is served a registry carrying your tools plus Acme's; a run that asserts nothing is served the shared registry, unchanged.
 
 The isolation is structural. Another tenant's connector is not withheld from that registry, it was never in it — so there is no filter that can be got wrong, and no listing that can leak a name.
 
@@ -183,17 +183,17 @@ await vendo.tenantConnectors.list("acme");
 // [{ org: "acme", name: "billing", kind: "mcp", url: "…", registeredAt: "…" }]
 ```
 
-The vault belongs to whichever store composes. If Vendo composes it, `VENDO_STORE_ENCRYPTION_KEY` (base64, 32 bytes) is what turns it on. If you pass your own store, you configure it there yourself — `createStore({ url, encryption: { key: ... } })` — because an explicitly passed store owns its own secrets config, and the environment variable never reaches it.
+The vault belongs to whichever store composes. If h0x-flow composes it, `VENDO_STORE_ENCRYPTION_KEY` (base64, 32 bytes) is what turns it on. If you pass your own store, you configure it there yourself — `createStore({ url, encryption: { key: ... } })` — because an explicitly passed store owns its own secrets config, and the environment variable never reaches it.
 
 With no key at all, what happens next depends on which store composed, and the two answers differ.
 
 | No key, and the store is… | A registration carrying a token |
 | --- | --- |
-| composed by Vendo, in development | Written **in the clear**, behind one loud warning |
-| composed by Vendo, with `NODE_ENV=production` | Refused |
+| composed by h0x-flow, in development | Written **in the clear**, behind one loud warning |
+| composed by h0x-flow, with `NODE_ENV=production` | Refused |
 | passed by you | Refused in **every** environment, development included |
 
-A store Vendo composes gets the development allowance automatically. A store you pass does not: it owns its own secrets config, so it refuses until you give it a key — or opt in explicitly with `createStore({ url, allowUnencryptedSecrets: true })`, which is a development convenience and nothing more.
+A store h0x-flow composes gets the development allowance automatically. A store you pass does not: it owns its own secrets config, so it refuses until you give it a key — or opt in explicitly with `createStore({ url, allowUnencryptedSecrets: true })`, which is a development convenience and nothing more.
 
 A tokenless registration is unaffected either way: it stores no secret, so it needs no vault.
 

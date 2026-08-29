@@ -32,7 +32,7 @@ deterministic structural checks still run. The layer split leans on exactly
 that: layer 1 is the structural clean room (zero model credentials), and the
 full AI sweep (layer 2 scoring + AI polish) runs on the Mac mini.
 
-## Local Vendo injection
+## Local h0x-flow injection
 
 The harness owns the local-pack boundary. Once per sweep it builds the workspace
 and packs the v0 publish set: `@vendoai/core`, `store`, `agent`, `actions`,
@@ -44,13 +44,13 @@ then runs the app's non-frozen install and invokes `vendo init --yes` through th
 built `packages/vendo` CLI.
 
 Known local-pack hazard: paths containing spaces are rejected up front by the
-harness. Keep both the Vendo workspace path and `corpus/.repos/<name>/` paths
+harness. Keep both the h0x-flow workspace path and `corpus/.repos/<name>/` paths
 space-free.
 
 ## Local hosts
 
 Manifest entries may use `localPath` instead of `gitUrl` plus `pinnedSha`. The
-path is relative to the Vendo repo root; each run copies it into `.repos/`,
+path is relative to the h0x-flow repo root; each run copies it into `.repos/`,
 omits generated/dependency trees, and creates a fresh one-commit Git snapshot
 for the same init-idempotency checks used by external repos. `express-host` is
 the permanent proof that the framework-agnostic handler claim in contracts 09
@@ -67,7 +67,7 @@ the permanent proof that the framework-agnostic handler claim in contracts 09
   `next`.
 - `packageManager`: optional `pnpm@x.y.z`-style pin written into the checkout's
   root `package.json` when the repo declares none of its own — without it
-  corepack resolves the Vendo root's pin, a different major.
+  corepack resolves the h0x-flow root's pin, a different major.
 - `license`: SPDX identifier or a documented best-effort license string.
 - `tier`: `broad` or `deep`.
 - `bootstrap`: install command, env template, optional typecheck command, and
@@ -76,7 +76,7 @@ the permanent proof that the framework-agnostic handler claim in contracts 09
 
 Env template values are either literals or secret placeholders such as
 `${CORPUS_UMAMI_DATABASE_URL}`. Later bootstrap code resolves placeholders from
-the orchestrating environment; Vendo-specific wiring never belongs here.
+the orchestrating environment; h0x-flow-specific wiring never belongs here.
 
 ## Adding a repo
 
@@ -85,7 +85,7 @@ the orchestrating environment; Vendo-specific wiring never belongs here.
 2. Add one manifest entry pinned to the verified SHA.
 3. Use the repo's lockfile to choose `pnpm install --frozen-lockfile`,
    `npm ci`, or the equivalent install command.
-4. Copy only host-app setup needs into `envTemplate`; never add Vendo-specific
+4. Copy only host-app setup needs into `envTemplate`; never add h0x-flow-specific
    env vars or code.
 5. Run `pnpm corpus validate` and the harness tests.
 

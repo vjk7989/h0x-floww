@@ -1,6 +1,6 @@
 # Maple
 
-Maple is a self-contained consumer-neobank demo for Vendo's "$87 Mystery"
+Maple is a self-contained consumer-neobank demo for h0x-flow's "$87 Mystery"
 story. Its deterministic seed includes an $87 DoorDash charge at 1:14 AM,
 alongside accounts, cards, transactions, goals, payments, and spending
 insights.
@@ -54,7 +54,7 @@ Locally the password defaults to `maple-demo`, so both users are always there.
 
 The Auth.js session is the identity for everything, wired with one config key
 — `auth: authJs({ secret: authSecret, user })` in `src/vendo/server.ts`: the
-Vendo principal is the session's user id, the MCP OAuth adapter resolves the
+h0x-flow principal is the session's user id, the MCP OAuth adapter resolves the
 same session, and away execution mints REAL session tokens for the granting
 user through the same Auth.js preset with the host's own `AUTH_SECRET`.
 Present execution forwards the signed-in user's cookie to `VENDO_BASE_URL`.
@@ -66,7 +66,7 @@ Every product screen uses the real Route Handlers under `src/app/api` through
 the typed client and SWR hooks. The deterministic in-memory store lives under
 `src/server`; pages do not import seed data.
 
-Vendo is composed once in `src/vendo/server.ts` with
+h0x-flow is composed once in `src/vendo/server.ts` with
 `createVendo({ model, principal, policy, connectors })` and mounted by the
 single catch-all route at `/api/vendo/[...vendo]`. The React surface uses the
 umbrella `VendoProvider`, UI chrome/tree subpaths, Maple's registered host
@@ -76,15 +76,15 @@ The `.vendo/` directory is the committed host contract: tools, overrides,
 policy, product brief, and theme. `vendo sync` runs before development and
 production builds.
 
-Cmd/Ctrl+K opens Vendo. Cmd/Ctrl+Shift+. restores Maple's deterministic seed.
+Cmd/Ctrl+K opens h0x-flow. Cmd/Ctrl+Shift+. restores Maple's deterministic seed.
 
 ## Store posture
 
-The Vendo store slot is an explicit demo decision, wired in
+The h0x-flow store slot is an explicit demo decision, wired in
 `src/vendo/server.ts`:
 
 - **Deployed (Railway): the Cloud hosted store.** The slot stays unset, so the
-  `VENDO_API_KEY` env ladder composes Vendo Cloud's hosted store. Railway's
+  `VENDO_API_KEY` env ladder composes h0x-flow Cloud's hosted store. Railway's
   container filesystem is ephemeral — a container-local store would silently
   wipe demo threads, pins, and grants on every redeploy; hosted state
   survives, and Cloud stays the single firing authority for the demo's
@@ -107,7 +107,7 @@ origin with `/maple` on the end first, then change it to
 `https://maple.vendo.run/maple` after DNS is live and redeploy. It is the app's FULL public URL, **path prefix
 included** — Maple is served under `/maple`, so `/maple` belongs in the value.
 Nothing strips it: stored host tool bindings are prefix-free and every URL
-Vendo builds hangs off this one. Without it the door has no way to learn where
+h0x-flow builds hangs off this one. Without it the door has no way to learn where
 it is, and every URL it advertises 404s.
 
 For a fast local HTTPS iteration loop, this machine has Tailscale Funnel:
@@ -154,4 +154,4 @@ With these set, Maple stops serving `/authorize`, `/token`, and `/register`
 (the broker owns them), validates broker-issued ES256 bearers, and answers the
 broker's signed login handshake at `/api/vendo/mcp/federate` with Maple's own
 session. Pending agent actions — including door calls parked for consent —
-surface in-product on the Vendo tab's approvals inbox.
+surface in-product on the h0x-flow tab's approvals inbox.

@@ -2,10 +2,10 @@
 title: "Wire auth"
 sidebarTitle: "Wire auth"
 icon: "key"
-description: "Hand Vendo your existing sign-in, so every thread, app, and grant belongs to the user who made it."
+description: "Hand h0x-flow your existing sign-in, so every thread, app, and grant belongs to the user who made it."
 ---
 
-Vendo mints no identity of its own. You hand it your sign-in, and the subject it
+h0x-flow mints no identity of its own. You hand it your sign-in, and the subject it
 resolves scopes everything that request touches.
 
 <Steps>
@@ -186,7 +186,7 @@ every thread, app, and grant the turn creates.
   `memberships` seam.
 - **The `vendo:` namespace is reserved.** A resolver that returns one of those
   subjects is refused at the wire — `vendo:webhook:<source>` and
-  `vendo:org:<orgId>` are minted by Vendo itself.
+  `vendo:org:<orgId>` are minted by h0x-flow itself.
 - **`null` refuses the request** and the chrome goes quiet until a full page
   load — dispatch `new Event("vendo:identity-changed")` if you sign users in
   without one. Serve logged-out visitors with an `ephemeral: true` principal

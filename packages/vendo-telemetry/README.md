@@ -1,6 +1,6 @@
 # @vendoai/telemetry
 
-Provides anonymous, opt-out build and development telemetry for Vendo tooling.
+Provides anonymous, opt-out build and development telemetry for h0x-flow tooling.
 It is disabled by CI, production runtime, `DO_NOT_TRACK`, or
 `VENDO_TELEMETRY_DISABLED=1`.
 

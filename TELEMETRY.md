@@ -1,6 +1,6 @@
-# Vendo Telemetry
+# h0x-flow Telemetry
 
-Vendo collects anonymous, opt-out telemetry from build and development tooling so the project can understand setup success, feature use, and reliability. Product telemetry is build/dev-side only and never fires from a deployed production app.
+h0x-flow collects anonymous, opt-out telemetry from build and development tooling so the project can understand setup success, feature use, and reliability. Product telemetry is build/dev-side only and never fires from a deployed production app.
 
 ## What Is Collected
 
@@ -49,23 +49,23 @@ Example payload:
 
 ## What Is Never Collected
 
-Vendo telemetry never collects source code, file paths, prompts, generated UI, tool inputs or outputs, API keys, host app names, environment values, request bodies, raw error messages, or stack traces. (Cloud-configured installs send a scrubbed `errorDetail` — see When Vendo Cloud Is Configured.) The `packageManager` name is classified into a closed enum from the npm user-agent env var; no raw env values are sent.
+h0x-flow telemetry never collects source code, file paths, prompts, generated UI, tool inputs or outputs, API keys, host app names, environment values, request bodies, raw error messages, or stack traces. (Cloud-configured installs send a scrubbed `errorDetail` — see When h0x-flow Cloud Is Configured.) The `packageManager` name is classified into a closed enum from the npm user-agent env var; no raw env values are sent.
 
 ## Anonymous Identity
 
-Vendo creates a random UUID and stores it in `~/.vendo/telemetry.json` with two preferences: `optedOut` and `noticeShown`. The id is not derived from a machine, account, project, host app, or environment value. Deleting the file rotates the id.
+h0x-flow creates a random UUID and stores it in `~/.vendo/telemetry.json` with two preferences: `optedOut` and `noticeShown`. The id is not derived from a machine, account, project, host app, or environment value. Deleting the file rotates the id.
 
 `projectIdHash` identifies a project opaquely so events from the same repo can be grouped. It is a one-way SHA-256 of the git origin URL (normalized so ssh and https spellings match), or of the `package.json` name when there is no remote, and omitted when neither exists. A fixed public salt (`vendo-telemetry-project-v1`) is prepended before hashing; the raw URL or name is never sent and cannot be recovered from the hash. Changing the remote rotates the hash.
 
-## When Vendo Cloud Is Configured
+## When h0x-flow Cloud Is Configured
 
 Setting a well-formed `VENDO_API_KEY` (`vnd_` plus 40 hex characters) switches telemetry into the cloud lane. Nothing else activates it, and every opt-out below still applies — an opted-out user with a cloud key sends nothing.
 
-In the cloud lane every event additionally carries `cloud: true` and `cloudKeyHash`, the SHA-256 of the API key. The Vendo console stores key hashes, so cloud events can be joined to the owning account; PostHog never receives the key itself.
+In the cloud lane every event additionally carries `cloud: true` and `cloudKeyHash`, the SHA-256 of the API key. The h0x-flow console stores key hashes, so cloud events can be joined to the owning account; PostHog never receives the key itself.
 
 Cloud-lane events may also carry these extra properties (the `CLOUD_PROP_KEYS` set in `packages/vendo-telemetry/src/events.ts`), allowed on every event: `projectName`, `repoHost`, `errorDetail`, and the per-stage init timings `detectMs`, `engineMs`, `themeMs`, `wiringMs`. Without a valid key these keys are stripped before sending, even if the tooling passes them.
 
-`errorDetail` is the only free-text property Vendo ever sends. It is scrubbed first: file paths, email addresses, and secret-shaped strings (API keys, bearer tokens, long hex or base64 runs) are replaced with fixed tokens like `[path]` and `[secret]`, then the result is capped at 200 characters. The telemetry client re-scrubs every `errorDetail` as defense-in-depth even when the caller already did.
+`errorDetail` is the only free-text property h0x-flow ever sends. It is scrubbed first: file paths, email addresses, and secret-shaped strings (API keys, bearer tokens, long hex or base64 runs) are replaced with fixed tokens like `[path]` and `[secret]`, then the result is capped at 200 characters. The telemetry client re-scrubs every `errorDetail` as defense-in-depth even when the caller already did.
 
 ## Opt Out
 
@@ -81,7 +81,7 @@ Set `"optedOut": false` in `~/.vendo/telemetry.json` to clear the local opt-out 
 
 ## Internal Runs (VENDO_INTERNAL)
 
-`VENDO_INTERNAL=1` (or `true`) tags every event with `internal: true` instead of disabling telemetry. It exists for Vendo's own harnesses — certification campaigns, install evals, sandbox benches — that intentionally exercise the real telemetry path end-to-end: the events still flow (so the pipeline stays verifiable) but analytics excludes them from product metrics by filtering on the `internal` property. The marker is producer-set like the cloud markers, so event callers cannot spoof or clear it. It is not a consent mechanism and does not weaken any opt-out above: `CI`, `DO_NOT_TRACK`, and `VENDO_TELEMETRY_DISABLED` still send nothing regardless of `VENDO_INTERNAL`.
+`VENDO_INTERNAL=1` (or `true`) tags every event with `internal: true` instead of disabling telemetry. It exists for h0x-flow's own harnesses — certification campaigns, install evals, sandbox benches — that intentionally exercise the real telemetry path end-to-end: the events still flow (so the pipeline stays verifiable) but analytics excludes them from product metrics by filtering on the `internal` property. The marker is producer-set like the cloud markers, so event callers cannot spoof or clear it. It is not a consent mechanism and does not weaken any opt-out above: `CI`, `DO_NOT_TRACK`, and `VENDO_TELEMETRY_DISABLED` still send nothing regardless of `VENDO_INTERNAL`.
 
 ## Where Data Goes
 

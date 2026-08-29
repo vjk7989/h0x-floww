@@ -1,6 +1,6 @@
 # vendo cloud — live e2e (console.vendo.run)
 
-Run against the production Vendo Cloud API. Machine commands use a valid
+Run against the production h0x-flow Cloud API. Machine commands use a valid
 VENDO_API_KEY; user commands use a stored email-OTP session or the `--token
 <supabase access jwt>` fallback. There is no validate endpoint or client-side
 pre-check: the server checks key validity and meters on every call, and key
@@ -18,7 +18,7 @@ unchanged. There is also no `vendo cloud deploy` command and no
 ## Hosted runtime sync (wave 2+)
 
 With `VENDO_API_KEY` set, enabled automations sync to the hosted store
-automatically as you save them and run on Vendo's own schedulers and
+automatically as you save them and run on h0x-flow's own schedulers and
 Composio-delivered external triggers. See `docs-site/production/vendo-cloud.mdx`
 for the current behavior.
 

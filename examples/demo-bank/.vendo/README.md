@@ -1,4 +1,4 @@
-# Maple Vendo catalog
+# Maple h0x-flow catalog
 
 This directory follows the frozen host-side contract in 09-vendo.md:
 

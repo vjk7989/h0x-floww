@@ -50,7 +50,7 @@ Readers ignore unknown extra fields. Additive changes stay inside `@1`. A breaki
 
 ## Which parts are ours
 
-Your renderer sees your tool parts and Vendo's in one list. `isVendoToolPart` is the branch, and the only place you should match on the prefix. It is true for a tool part whose name starts with `vendo_`, in both part shapes the AI SDK streams (`tool-<name>` and `dynamic-tool`).
+Your renderer sees your tool parts and h0x-flow's in one list. `isVendoToolPart` is the branch, and the only place you should match on the prefix. It is true for a tool part whose name starts with `vendo_`, in both part shapes the AI SDK streams (`tool-<name>` and `dynamic-tool`).
 
 ```tsx focus={3-5}
 import { isVendoToolPart, VendoToolResult } from "@vendoai/vendo/react";

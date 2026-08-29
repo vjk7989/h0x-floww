@@ -1,6 +1,6 @@
 ---
 name: genbench
-description: Run Vendo's buy-vs-build generation benchmark — generation time + accuracy of the real Vendo pipeline vs raw-Claude baselines (diy, claude-code) on JSON-defined worlds. Use when asked to benchmark generation, compare Vendo vs raw models, measure generation speed/cost, or add genbench worlds/cases.
+description: Run h0x-flow's buy-vs-build generation benchmark — generation time + accuracy of the real h0x-flow pipeline vs raw-Claude baselines (diy, claude-code) on JSON-defined worlds. Use when asked to benchmark generation, compare h0x-flow vs raw models, measure generation speed/cost, or add genbench worlds/cases.
 ---
 
 # genbench

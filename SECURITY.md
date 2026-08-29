@@ -1,6 +1,6 @@
 # Security Policy
 
-Vendo renders agent-generated UI in a sandboxed iframe and executes tools
+h0x-flow renders agent-generated UI in a sandboxed iframe and executes tools
 against host APIs — security reports are taken seriously.
 
 ## Reporting a vulnerability

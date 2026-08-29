@@ -1,7 +1,7 @@
 ---
 title: "Server API"
 sidebarTitle: "Server API"
-description: "Every server-side symbol: the createVendo composition and the Vendo handle, the /server exports, the tool-pack subpaths, and the @vendoai/agents surface."
+description: "Every server-side symbol: the createVendo composition and the h0x-flow handle, the /server exports, the tool-pack subpaths, and the @vendoai/agents surface."
 ---
 
 ## Entry points
@@ -191,7 +191,7 @@ Each call returns a map of per-table deleted counts. Full semantics are on [Pers
 
 ## Tool pack for your own agent loop
 
-Two subpaths build the guarded Vendo tool pack for a host that keeps its own agent loop. Both are thin shims over one framework-neutral core.
+Two subpaths build the guarded h0x-flow tool pack for a host that keeps its own agent loop. Both are thin shims over one framework-neutral core.
 
 ```ts
 // @vendoai/vendo/ai-sdk
@@ -210,7 +210,7 @@ export const VENDO_PRINCIPAL_KEY = "vendo-principal"; // required per request; m
 export const VENDO_SESSION_KEY = "vendo-session-id";  // optional audit continuity
 ```
 
-Every pack tool executes through `vendo.guardedTools`, the same guard-bound registry Vendo's own loop uses.
+Every pack tool executes through `vendo.guardedTools`, the same guard-bound registry h0x-flow's own loop uses.
 
 `include` and `exclude` match final namespaced tool names exactly, and `exclude` wins. `@mastra/core` is an optional peer dependency used only by the `./mastra` subpath.
 

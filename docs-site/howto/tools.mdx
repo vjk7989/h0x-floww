@@ -2,7 +2,7 @@
 title: "Add tools"
 sidebarTitle: "Add tools"
 icon: "wrench"
-description: "Point Vendo at the API you already wrote, run one command, and the agent has hands."
+description: "Point h0x-flow at the API you already wrote, run one command, and the agent has hands."
 ---
 
 Every tool the agent can call lives in one file. `vendo sync` writes that file
@@ -184,11 +184,11 @@ API as the signed-in user. One audit line, either way.
   else lands `ungraded`, which the guard asks about on every call.
 - The AI pass then reads the handler behind each tool and writes what it finds
   to `.vendo/judgments.json`. It runs on whatever credential you already have —
-  Claude Code, the codex CLI, or your Vendo Cloud key.
+  Claude Code, the codex CLI, or your h0x-flow Cloud key.
 - `.vendo/tools.json` is machine-authored and regenerated wholesale on every
   sync, so never hand-edit it. Corrections live in `.vendo/overrides.json`,
   which sync never touches.
-- Tools from your API are named `host_*`. Vendo's own — `vendo_make`,
+- Tools from your API are named `host_*`. h0x-flow's own — `vendo_make`,
   `vendo_automate`, and the rest — are `vendo_*`, and they always ride along.
 - `.vendo/overrides.json` is the last word: re-grade a tool, make it confirm
   every run, hide it, or bundle a short sequence into one compound tool. See

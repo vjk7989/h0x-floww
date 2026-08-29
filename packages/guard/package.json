@@ -1,7 +1,7 @@
 {
   "name": "@vendoai/guard",
   "version": "0.55.0",
-  "description": "Vendo's policy core at one choke point: guard.bind, approvals, grants, audit, Vendo Auto judge, breakers.",
+  "description": "h0x-flow's policy core at one choke point: guard.bind, approvals, grants, audit, h0x-flow Auto judge, breakers.",
   "keywords": [
     "ai",
     "agent",
@@ -12,11 +12,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/runvendo/vendo.git",
+    "url": "git+https://github.com/vjk7989/h0x-floww.git",
     "directory": "packages/guard"
   },
   "homepage": "https://vendo.run",
-  "bugs": "https://github.com/runvendo/vendo/issues",
+  "bugs": "https://github.com/vjk7989/h0x-floww/issues",
   "engines": {
     "node": ">=20"
   },

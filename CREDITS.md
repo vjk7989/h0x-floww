@@ -1,6 +1,6 @@
 # Credits
 
-Vendo adapts small, well-chosen pieces from open-source projects rather than
+h0x-flow adapts small, well-chosen pieces from open-source projects rather than
 reinventing them. Every port carries an attribution comment at the site of use
 naming the source file and license; this page is the roll-up. Thank you to the
 authors below.

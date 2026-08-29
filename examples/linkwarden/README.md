@@ -1,10 +1,10 @@
-# Linkwarden — Vendo on a real open-source product
+# Linkwarden — h0x-flow on a real open-source product
 
 The runnable example lives in its own repository:
 **[runvendo/linkwarden-vendo](https://github.com/runvendo/linkwarden-vendo)** —
 a fork of [Linkwarden](https://github.com/linkwarden/linkwarden) (a bookmark
 manager: Next.js Pages Router, next-auth v4, Prisma/Postgres, yarn workspaces)
-with a Vendo agent embedded the way you'd embed it in your own product.
+with a h0x-flow agent embedded the way you'd embed it in your own product.
 
 It lives outside this repo on purpose: Linkwarden is AGPL-3.0 and this repo is
 Apache-2.0, so the fork carries the *applied* integration under upstream's
@@ -15,11 +15,11 @@ site.
 
 What it demonstrates that the in-repo demo hosts don't:
 
-- **A product Vendo didn't write.** Real routes, real auth, real workspace
+- **A product h0x-flow didn't write.** Real routes, real auth, real workspace
   quirks — every snippet below earned its place by fixing a wall we hit.
 - **The BYO-identity recipe** for a session scheme the presets don't speak
   (next-auth v4).
-- **A workspace with a conflicting `ai` major** (worker on ai@5, Vendo needs
+- **A workspace with a conflicting `ai` major** (worker on ai@5, h0x-flow needs
   ai@6) and the resolution fix.
 
 ## The whole integration
@@ -31,9 +31,9 @@ Four touches on upstream files, plus new files (`vendo init` writes the
 
 `apps/web/app/api/vendo/[...vendo]/route.ts` — an App Router route beside the
 Pages Router app. Linkwarden speaks next-auth v4, which the stock `authJs()`
-preset (Auth.js v5) cannot read — and Vendo mints no anonymous identities, so
+preset (Auth.js v5) cannot read — and h0x-flow mints no anonymous identities, so
 an unreadable session is a hard 403. The host resolves its own session and
-hands Vendo a principal; v4's own `getToken` decodes the session JWE with
+hands h0x-flow a principal; v4's own `getToken` decodes the session JWE with
 `NEXTAUTH_SECRET`:
 
 ```ts

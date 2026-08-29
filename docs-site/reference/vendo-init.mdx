@@ -10,7 +10,7 @@ npx vendo init
 
 One command. It scans the app with deterministic analysis, writes everything it can, and tells you the little that is left.
 
-Init never writes to a file you authored. Every file it creates is new and Vendo-owned, plus its own `package.json` hooks.
+Init never writes to a file you authored. Every file it creates is new and h0x-flow-owned, plus its own `package.json` hooks.
 
 ## What init writes
 
@@ -95,7 +95,7 @@ A single detected family gets one `[Y/n]` confirm before anything is written. De
 
 ## The model key
 
-Init runs a key step rather than scaffolding a model file. If a provider key is already set it says so; otherwise it offers a Vendo Cloud key inline.
+Init runs a key step rather than scaffolding a model file. If a provider key is already set it says so; otherwise it offers a h0x-flow Cloud key inline.
 
 `vendo login` approves a code in the browser and appends the minted `VENDO_API_KEY` to `.env.local` without touching your other keys. You never paste a key.
 
@@ -107,7 +107,7 @@ There is no interview. An interactive run stops only for Enter-to-accept decisio
 
 - the detected auth preset
 - where the app runs in dev, prefilled from your `dev` script's port — Enter accepts it, and the answer lands in `.env.local` as `VENDO_BASE_URL`
-- the Vendo Cloud key offer
+- the h0x-flow Cloud key offer
 - consent for the AI judgment pass
 - one aggregated review, if that pass proposes a loosening
 - a `zod` bump when your pin is below 3.25
@@ -150,7 +150,7 @@ The answer flags are the ones init already has: `--use-case`, `--auth`, `--cloud
 | --- | --- | --- |
 | `--use-case <name>` | `embedded`, `agent-loop`, `mcp` | how people will use the agent |
 | `--auth <preset>` | `authJs`, `clerk`, `supabase`, `auth0`, `jwt`, `none` | which auth preset to wire |
-| `--cloud-key <key>` | a `vnd_` key | writes an existing Vendo Cloud key to `.env.local` |
+| `--cloud-key <key>` | a `vnd_` key | writes an existing h0x-flow Cloud key to `.env.local` |
 | `--byo` | | declines the Cloud key offer |
 | `--ai` / `--no-ai` | | force the AI judgment and theme pass on or off |
 | `--base-url <url>` | a full `http(s)` URL | where the app runs in dev |
@@ -161,14 +161,14 @@ The answer flags are the ones init already has: `--use-case`, `--auth`, `--cloud
 | `--service-key` | | the dev sign-in key, which a local door wires by default. `--use-case mcp` only |
 | `--yes` | | skip every prompt and take the detected defaults |
 | `--agent` | | ask through a coding agent: print the questions as JSON, or write when the answers ride along |
-| `--force` | | regenerate Vendo-owned files under `.vendo/`. Never replaces host source |
+| `--force` | | regenerate h0x-flow-owned files under `.vendo/`. Never replaces host source |
 | `--check` / `--no-check` | | run `vendo doctor` at the end, or skip it |
 
 `--cloud-key` and `--byo` answer the same question, as do `--ai` and `--no-ai` and `--check` and `--no-check`. Passing both halves of a pair exits `1`.
 
 `--posture` or `--service-key` without `--use-case mcp` exits `1` rather than being silently ignored, and so does `--service-key` with `--posture broker`: a Cloud-fronted door provisions its own key, so accepting one there would discard it. `--ai-polish` is the older spelling of `--ai`.
 
-`--posture broker` exits `1` too when the dev URL is not `https://`: Vendo Cloud registers that origin as the tenant's forwarding address and refuses a non-https one, so the door would be written and then fail on its first request. Take `--posture local` — zero config, works on http — or pass an https origin. The check reads the URL the run resolved, not the flags, so it catches a broker posture picked at the prompt too.
+`--posture broker` exits `1` too when the dev URL is not `https://`: h0x-flow Cloud registers that origin as the tenant's forwarding address and refuses a non-https one, so the door would be written and then fail on its first request. Take `--posture local` — zero config, works on http — or pass an https origin. The check reads the URL the run resolved, not the flags, so it catches a broker posture picked at the prompt too.
 
 <Warning>
   `--base-url` is a DEV URL: it lands in `.env.local` as `VENDO_BASE_URL`, which is what your own agent loop, any backend process, and the MCP door need before their first tool call. Production is never set here — set `VENDO_BASE_URL` in your hosting platform's environment settings when you deploy. A deployed URL in `.env.local` would repoint local dev's discovery, callbacks, and credential forwarding at the deployed origin.
@@ -182,7 +182,7 @@ Init only creates what is missing. A rerun on a wired app prints "Already wired"
 
 Day to day you do not re-run init at all. The `predev` and `prebuild` hooks call [`vendo sync`](/reference/cli#vendo-sync) on every build, which is what keeps `.vendo/tools.json` current.
 
-Re-run init when the detected surface changes in a way sync cannot scaffold for, such as adding Express to a Next app. Starting over or removing Vendo is on [Uninstall](/reference/uninstall).
+Re-run init when the detected surface changes in a way sync cannot scaffold for, such as adding Express to a Next app. Starting over or removing h0x-flow is on [Uninstall](/reference/uninstall).
 
 ## Verify
 
@@ -197,7 +197,7 @@ It reads the repo — wiring, the `.vendo/` files, the tool catalog, the model c
 <Note>
   Right after a release, package managers with a cooldown hold the new version back. pnpm 11 fails loud with "no versions available"; npm's opt-in `min-release-age` instead resolves silently to an older version, which init then pins.
 
-  Check what you got with `npm ls @vendoai/vendo`. To take the current release anyway, pass `--min-release-age=0` on npm, or exclude Vendo in `pnpm-workspace.yaml`:
+  Check what you got with `npm ls @vendoai/vendo`. To take the current release anyway, pass `--min-release-age=0` on npm, or exclude h0x-flow in `pnpm-workspace.yaml`:
 
   ```yaml
   minimumReleaseAgeExclude:

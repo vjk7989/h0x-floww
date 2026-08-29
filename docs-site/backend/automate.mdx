@@ -90,7 +90,7 @@ await runtime.close();
 `close()` stops the scheduler and nothing else: the records stay in the store,
 armed, because stopping a process is not a decision about what should fire.
 
-Inside a Vendo deployment, `createVendo`'s own boot is the lifecycle, and
+Inside a h0x-flow deployment, `createVendo`'s own boot is the lifecycle, and
 registering the agent is what arms it. An automation record stores the agent's
 **name**, never the agent, and your code is looked up under that name when it
 fires:

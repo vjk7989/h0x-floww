@@ -34,7 +34,7 @@ That split is the point. A re-sync rewrites the machine layer and re-judges the 
 | `generated/remix-holes/<Slot>.tsx` | `vendo sync` | TypeScript. One slot's unportable subtrees, cut from your component and rendered natively as holes |
 | `components/<Name>.json` | `vendo sync` | `CapturedHostComponent`. One registered host component, refs only, no source |
 | `components/modules/<hex>.json` | `vendo sync` | `CapturedModule`, `{ source, imports? }`, content-addressed by the sha-256 of its canonical JSON, so a module ten components share is stored once |
-| `cloud.json` | `vendo sync`, asked once | `{ "pushComponents": boolean }`. This project's answer to whether registered-component source may go to Vendo Cloud |
+| `cloud.json` | `vendo sync`, asked once | `{ "pushComponents": boolean }`. This project's answer to whether registered-component source may go to h0x-flow Cloud |
 | `data/` | the store | PGlite files |
 | `data/.gitignore` | init | `*` plus an exception for itself. Doctor warns [E-CFG-002](/production/troubleshooting/e-cfg-002) when it is missing |
 | `data/judge/` | `vendo sync`, AI pass | One raw artifact per judge stage. Deleted and repopulated on every AI run |

@@ -47,8 +47,8 @@ origin your dev server prints. Init writes the door — `mcp: true` — into
 
 `vendo.agentTools` opens the door for one conversation. Pass the incoming
 request and the agent acts as whoever is signed in. This route drives Anthropic
-directly, so it needs its own `ANTHROPIC_API_KEY` in `.env.local` — a Vendo
-Cloud key covers Vendo's own inference, not your loop.
+directly, so it needs its own `ANTHROPIC_API_KEY` in `.env.local` — a h0x-flow
+Cloud key covers h0x-flow's own inference, not your loop.
 
 ```ts app/api/agent/route.ts focus={2,8,15,20-21}
 import Anthropic from "@anthropic-ai/sdk";
@@ -173,7 +173,7 @@ The setup was the same for everyone. These, in order, make it yours.
     Swap the demo principal for your real sign-in.
   </Card>
   <Card title="Add tools" icon="wrench" href="/howto/tools">
-    Point Vendo at your API — the agent gets hands.
+    Point h0x-flow at your API — the agent gets hands.
   </Card>
   <Card title="Approve actions" icon="shield-check" href="/howto/approvals">
     Decide what runs and what asks first.

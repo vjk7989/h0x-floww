@@ -1,6 +1,6 @@
 # @vendoai/knowledge
 
-`@vendoai/knowledge` is Vendo's product knowledge base: the concrete retrieval engines and the ingestion pipeline that sit behind core's frozen `KnowledgeAdapter` contract (`@vendoai/core`).
+`@vendoai/knowledge` is h0x-flow's product knowledge base: the concrete retrieval engines and the ingestion pipeline that sit behind core's frozen `KnowledgeAdapter` contract (`@vendoai/core`).
 
 One contract, three engines:
 

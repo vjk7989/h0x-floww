@@ -1,7 +1,7 @@
 # @vendoai/agents
 
 Spawn a governed, harness-grade agent in any Node backend in a few lines. One
-runtime, always host-run; a Vendo Cloud key fills the sandbox slot when you
+runtime, always host-run; a h0x-flow Cloud key fills the sandbox slot when you
 leave it unset — an explicit adapter always wins, and there is no hidden
 key-conditional behavior.
 

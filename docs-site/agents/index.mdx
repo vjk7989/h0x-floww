@@ -3,7 +3,7 @@ title: "Agent install playbook"
 description: "The install playbook for coding agents: install, run init, relay its questions, then follow the one section for the path init's Continue link names."
 ---
 
-Vendo puts an agent inside a company's product: customers build views, act
+h0x-flow puts an agent inside a company's product: customers build views, act
 through the host's own API as themselves, and automate work inside the host's
 brand and guardrails. It installs as one npm package plus a small `.vendo/`
 contract in the host repo. You, a coding agent, can complete the whole
@@ -109,10 +109,10 @@ pointed at.
    check is not optional: stale placeholder versions (0.1.x) exist on npm, and package
    managers with a release-age cooldown (pnpm 11 holds new releases for a
    day by default via `minimumReleaseAge`; npm's `min-release-age` is
-   opt-in) will SILENTLY resolve a fresh Vendo release to that stale
+   opt-in) will SILENTLY resolve a fresh h0x-flow release to that stale
    version — or to nothing. Everything this playbook uses (`init --agent`,
    `vendo login`, `sync --ai`) does not exist there. If the version is
-   old or missing, exclude Vendo from the cooldown and reinstall:
+   old or missing, exclude h0x-flow from the cooldown and reinstall:
 
    ```yaml
    # pnpm-workspace.yaml
@@ -151,7 +151,7 @@ pointed at.
    recommended pick), through their own agent loop, or from outside AI apps
    over MCP. Should the assistant act as their signed-in user, on the provider
    init detected ([which preset?](/howto/auth)). Where the model comes
-   from: a free Vendo Cloud key is one browser click and needs no provider
+   from: a free h0x-flow Cloud key is one browser click and needs no provider
    account, or they bring their own Anthropic or OpenAI key. And where their
    app runs in dev — init prefills the port their `dev` script names, so this
    one is usually a yes, and the answer lands in `.env.local` as
@@ -163,9 +163,9 @@ pointed at.
    answer is money, and it is not yours to give.
 
    Take the model answer first, before you re-run anything. It is the one
-   answer that has no flag: the Vendo Cloud pick is a login you run now, and
+   answer that has no flag: the h0x-flow Cloud pick is a login you run now, and
    the key only counts once login has written it to `.env.local`.
-   If they choose Vendo Cloud, drive the login as a bounded loop —
+   If they choose h0x-flow Cloud, drive the login as a bounded loop —
    never a single blocking call:
 
    ```bash
@@ -204,7 +204,7 @@ pointed at.
    `--use-case` takes `embedded`, `agent-loop`, or `mcp`.
    `--auth` takes `authJs`, `clerk`, `supabase`, `auth0`, `jwt`, or `none`.
    `--byo` means your human brings their own model key; `--cloud-key <key>`
-   answers with an existing Vendo Cloud key. A `VENDO_API_KEY` already sitting
+   answers with an existing h0x-flow Cloud key. A `VENDO_API_KEY` already sitting
    in `.env.local` needs neither: init merges it into the run's env, uses it as
    it is, and never asks. If they bring their own key, tell them to put it in
    `.env.local` as `ANTHROPIC_API_KEY=...` or `OPENAI_API_KEY=...` and to tell
@@ -339,7 +339,7 @@ on the [verify page](/production/troubleshooting).
 
 ## In the product
 
-Vendo brings the loop, the model, and the chat surface, and renders generated
+h0x-flow brings the loop, the model, and the chat surface, and renders generated
 screens in the host's own brand. Init wrote this path with `--use-case
 embedded`. The one page for it:
 [`https://docs.vendo.run/product/quickstart.md`](/product/quickstart).
@@ -409,9 +409,9 @@ live screen built from their API.
 
 ## In an agent you already run
 
-The host keeps its loop, its chat, and its model; Vendo adds a guarded tool
+The host keeps its loop, its chat, and its model; h0x-flow adds a guarded tool
 pack to it. Init wrote this path with `--use-case agent-loop`, which also tells
-doctor not to look for a `<VendoProvider>` or a visible Vendo surface.
+doctor not to look for a `<VendoProvider>` or a visible h0x-flow surface.
 
 **One walkthrough is your page.** Fetch exactly ONE and follow it end to end —
 do not read both:
@@ -442,14 +442,14 @@ without — so there is still exactly one page to read.
 **This is the path `VENDO_BASE_URL` is load-bearing on**: the tool runs in
 THEIR chat route, which is not a request the wire route ever sees.
 
-**Guard and done on this path.** There is no overlay to place. Vendo calls
+**Guard and done on this path.** There is no overlay to place. h0x-flow calls
 arrive in the host's chat as `dynamic-tool` parts: hand every finished one to
 `<VendoToolResult>`, which renders plain results, the live screen `vendo_make`
 returns, and approve/deny cards, all under one provider. A chat-only host that
 holds a ref it stored rather than one from a live call renders
 `<VendoApprovalEmbed refValue={…} />` directly instead
 ([embeds](/existing-agent/embeds)). Done is their own chat answering one real
-ask with a Vendo card built from their API.
+ask with a h0x-flow card built from their API.
 
 ## Outside agents over MCP
 
@@ -468,7 +468,7 @@ npx vendo init --agent --use-case mcp --auth authJs --base-url http://localhost:
 ```
 
 Once the use case is `mcp`, ONE more question comes back on that run for you to
-relay, and only when your human holds no Vendo Cloud key: Vendo Cloud, or their
+relay, and only when your human holds no h0x-flow Cloud key: h0x-flow Cloud, or their
 own keys. A free Cloud key runs their models AND signs outside agents in — on
 their machine while they develop, and through a stable
 `yourcompany.mcp.vendo.run` tenant once they deploy, so none of the OAuth
@@ -556,7 +556,7 @@ the answer once they have an https origin to point it at.
    generated into its own `vendo/server.ts` at the origin root as well
    (`app.use("/.well-known", mountVendo())`) — registered AFTER the app's own
    well-known routes, because that middleware is terminal: anything behind it
-   gets Vendo's not-found JSON. Custom runtimes route `/.well-known` into the
+   gets h0x-flow's not-found JSON. Custom runtimes route `/.well-known` into the
    same `handleVendoRequest(request, env)` they already export.
 
 3. **`VENDO_BASE_URL`.** It names the origin the door actually answers on: the
@@ -636,7 +636,7 @@ backend, answering from their own API.
 
 ## Rules of engagement
 
-- **Ask your human before creating any account or key.** That includes Vendo
+- **Ask your human before creating any account or key.** That includes h0x-flow
   Cloud (`vendo login`), model provider keys, and sandbox accounts
   (E2B or the managed Cloud sandbox). Relay the choice; never sign up on your own.
   Look before you ask, though: a `VENDO_API_KEY` already in `.env.local` or the
@@ -678,7 +678,7 @@ backend, answering from their own API.
 | `https://docs.vendo.run/product/quickstart.md` | The in-product path: the provider, the overlay, and slots |
 | `https://docs.vendo.run/existing-agent/ai-sdk.md` | The tool-pack path for a host that already runs an AI SDK loop |
 | `https://docs.vendo.run/existing-agent/mastra.md` | The tool-pack path for a host that already runs a Mastra agent |
-| `https://docs.vendo.run/backend/quickstart.md` | The backend path: one package, `agent()`, `chat()`, `handler()`, `run()` — no CLI and no Vendo UI to mount |
+| `https://docs.vendo.run/backend/quickstart.md` | The backend path: one package, `agent()`, `chat()`, `handler()`, `run()` — no CLI and no h0x-flow UI to mount |
 | `https://vendo.run/auth.md` | The raw claim-ceremony protocol behind `vendo login` |
 | `https://docs.vendo.run/llms.txt` | Index of every docs page for LLM ingestion (also at `/.well-known/llms.txt`) |
 | `https://docs.vendo.run/llms-full.txt` | The whole docs site as one file |

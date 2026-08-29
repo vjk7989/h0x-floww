@@ -2,7 +2,7 @@
 title: "Theme it"
 sidebarTitle: "Theme it"
 icon: "palette"
-description: "One token file sets the colors, type, radii, density, and motion of every Vendo surface in your product."
+description: "One token file sets the colors, type, radii, density, and motion of every h0x-flow surface in your product."
 ---
 
 Your brand, extracted from your own UI on day one, then yours to edit.
@@ -87,7 +87,7 @@ import theme from "../.vendo/theme.json";
 
 Save and reload. The overlay, slots, generated screens, approval modals, and
 toasts each stamp these tokens on their own root and move together. Nothing in
-the chrome hardcodes a Vendo brand.
+the chrome hardcodes a h0x-flow brand.
 
 </Step>
 
@@ -108,7 +108,7 @@ import { VendoOverlay, VendoSlot } from "@vendoai/vendo/react";
 ```
 
 It merges over the provider's resolved theme group by group, the same way the
-provider's merges over Vendo's default — so a surface states only what differs,
+provider's merges over h0x-flow's default — so a surface states only what differs,
 and the groups it leaves out stay the brand. With no provider above it, the
 merge runs over the default.
 
@@ -121,14 +121,14 @@ approval modal a press parks on, and the toast stack all wear the theme of the
 surface they came from rather than falling back to the provider's.
 
 <Warning>
-  A surface theme styles Vendo's **frame**, not the view inside it. A generated
+  A surface theme styles h0x-flow's **frame**, not the view inside it. A generated
   view keeps the **provider** theme either way it mounts — served in an iframe,
   or rendered natively as a pin — because the view is its own theme boundary and
   restates the provider's tokens on itself. Theme a surface to change the chrome
   around a generated view; change the provider to change the view.
 </Warning>
 
-A slot showing your own markup renders it untouched, with no Vendo wrapper at
+A slot showing your own markup renders it untouched, with no h0x-flow wrapper at
 all. There is no chrome on screen there, so `theme` has nothing to style.
 
 ## Good to know
@@ -138,7 +138,7 @@ all. There is no chrome on screen there, so `theme` has nothing to style.
   `--primary`, `--background`, `--card`, `--font-sans`, `--radius`.
 - Every group also lands as `--vendo-*` CSS variables on the surface root, so
   `var(--vendo-density-card-padding)` in your own styles tracks the same theme.
-- `--vendo-color-scheme` is derived, not written. Vendo takes the relative
+- `--vendo-color-scheme` is derived, not written. h0x-flow takes the relative
   luminance of `colors.background` and flips to `dark` below `0.179`, so a dark
   brand gets dark chrome on its own.
 - Those five groups are the whole required shape. Every token added since is
@@ -186,7 +186,7 @@ comfortable page.
   </Accordion>
   <Accordion title="Color scheme">
 
-Vendo derives `color-scheme` from the WCAG relative luminance of
+h0x-flow derives `color-scheme` from the WCAG relative luminance of
 `colors.background` and publishes it as `--vendo-color-scheme`. Backgrounds
 below `0.179` resolve to `dark`, and everything else resolves to `light`.
 

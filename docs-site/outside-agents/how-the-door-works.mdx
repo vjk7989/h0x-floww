@@ -37,7 +37,7 @@ same guard your own UI answers to.
 ## Who is calling
 
 An agent that turns up with nothing gets a `401`, and the challenge on it points
-at your broker. Vendo Cloud runs that broker for you: the person signs in there
+at your broker. h0x-flow Cloud runs that broker for you: the person signs in there
 with your app's own login, and the agent leaves with a short-lived bearer. The
 door itself serves no `/authorize` or `/token` on that posture, which is why the
 exchange in [Service keys & broker](/outside-agents/service-keys-and-broker)
@@ -58,7 +58,7 @@ unset. Operator and internal tools stay off it. Names, descriptions, and input
 schemas are served verbatim from your registry, and a tool's `title` is what a
 client shows a person instead of the wire name.
 
-Vendo's own `vendo_*` tools ride along: `vendo_make` for a generated screen, the
+h0x-flow's own `vendo_*` tools ride along: `vendo_make` for a generated screen, the
 saved-apps viewer, and the caller's own files. The file tools are scoped to the
 bearer's subject and take no subject argument, so a token for `user_1904` reaches
 that person's files and no one else's. See [User data](/customize/user-data) for
@@ -99,7 +99,7 @@ permission boundary: your policy and approvals still decide what may run, and th
 
 The agent has no session in your product, so the inbound bearer is never
 forwarded to your host routes. Door calls reach your API through the `actAs`
-seam: Vendo hands `actAs` the caller and the consent recorded for that client,
+seam: h0x-flow hands `actAs` the caller and the consent recorded for that client,
 and uses the auth material you return. Without `actAs` configured, the tool
 returns a `not-implemented` error.
 

@@ -36,14 +36,14 @@ export async function run(request: Request, task: string) {
 }
 ```
 
-That is the whole integration. Vendo imports nothing from Anthropic and
-Anthropic imports nothing from Vendo — `door.tools` is already the shape
+That is the whole integration. h0x-flow imports nothing from Anthropic and
+Anthropic imports nothing from h0x-flow — `door.tools` is already the shape
 `messages.create` takes, and `door.results` already returns the shape you push
 back.
 
 ## Who the agent acts as
 
-Pass the incoming request and Vendo reads the signed-in user off its session
+Pass the incoming request and h0x-flow reads the signed-in user off its session
 cookie, through the same seam the door authenticates with. Pass a user id
 instead — one of *your* ids, spelled the way your product spells it — and the
 agent acts as that person from a cron or a queue worker.
@@ -72,7 +72,7 @@ next call and the call goes through.
 `door.results` never throws for a guarded call. If your policy parks one, the
 result block carries the sentence the model should read —
 
-> This action needs approval. Approval `apr_…` is waiting in Maple's Vendo
+> This action needs approval. Approval `apr_…` is waiting in Maple's h0x-flow
 > approvals queue — resolve it there, then retry.
 
 — and `door.embeds` grows a typed `vendo/approval-ref@1` for your own code:
@@ -122,7 +122,7 @@ client for it: it mints a short-lived user-bound token with
 [`vendo.tokenFor`](/reference/server-api), opens one MCP session at
 `/api/vendo/mcp`, lists tools, and calls them. If you would rather hold that
 client yourself — your own MCP SDK, your own session policy, a language that is
-not TypeScript — `tokenFor` is the only Vendo-shaped part and the rest is the
+not TypeScript — `tokenFor` is the only h0x-flow-shaped part and the rest is the
 protocol:
 
 ```ts

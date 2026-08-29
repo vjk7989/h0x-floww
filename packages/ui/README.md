@@ -1,6 +1,6 @@
 # @vendoai/ui
 
-Everything Vendo that runs in the host's browser: the API client, the
+Everything h0x-flow that runs in the host's browser: the API client, the
 headless React hooks, the optional prebuilt UI, and the renderer that
 displays agent-generated interfaces safely.
 
@@ -8,8 +8,8 @@ displays agent-generated interfaces safely.
 
 | Import | What you get | Use it when |
 |---|---|---|
-| `@vendoai/ui` | `<VendoProvider>`, `createVendoClient`, and one hook per resource (`useApps`, `useApprovals`, `useVendoThread`, …) | you're building your own UI on Vendo's data |
-| `@vendoai/ui/chrome` | the prebuilt, themed surfaces — chat thread, approval cards, launcher | you want Vendo working out of the box |
+| `@vendoai/ui` | `<VendoProvider>`, `createVendoClient`, and one hook per resource (`useApps`, `useApprovals`, `useVendoThread`, …) | you're building your own UI on h0x-flow's data |
+| `@vendoai/ui/chrome` | the prebuilt, themed surfaces — chat thread, approval cards, launcher | you want h0x-flow working out of the box |
 | `@vendoai/ui/tree` | the renderer that mounts agent-generated UI in a sandboxed iframe, brand-matched via `--vendo-*` CSS variables | rendering generated apps |
 | `@vendoai/ui/kit` | the component vocabulary (forms, charts, tables) generated app code builds screens from | inside generated apps — you rarely import this yourself |
 

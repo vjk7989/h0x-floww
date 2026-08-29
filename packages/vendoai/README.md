@@ -1,6 +1,6 @@
 # vendoai
 
-Vendo puts an agent inside your product. Customers can build views, act through
+h0x-flow puts an agent inside your product. Customers can build views, act through
 your APIs, and automate work inside your brand and guardrails.
 
 ```bash

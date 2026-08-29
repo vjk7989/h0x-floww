@@ -1,30 +1,30 @@
-# Mastra agent + Vendo
+# Mastra agent + h0x-flow
 
 This is the unmodified [`create-mastra`](https://mastra.ai/docs) weather-agent
 starter, fronted with Next.js per Mastra's own guide (`@mastra/ai-sdk` →
-`useChat` + AI SDK UI), **plus a four-touch Vendo diff** (~60 lines). Your
-agent keeps its own loop, model, and UI — Vendo adds, through that same loop:
+`useChat` + AI SDK UI), **plus a four-touch h0x-flow diff** (~60 lines). Your
+agent keeps its own loop, model, and UI — h0x-flow adds, through that same loop:
 
 1. **Guarded host actions** — every `vendo_*` call routes policy → approval →
    audit (`vendo_send_trip_report` here asks for approval before "sending").
 2. **Generated UI in your chat** — `vendo_make` returns fast with an
-   app ref; the build streams into `<VendoAppEmbed>` over the Vendo wire.
-3. **Whole-task delegation** — `vendo_delegate` hands Vendo's own agent a task.
+   app ref; the build streams into `<VendoAppEmbed>` over the h0x-flow wire.
+3. **Whole-task delegation** — `vendo_delegate` hands h0x-flow's own agent a task.
 
-Docs: the "Use with your existing agent" section of the Vendo docs site.
+Docs: the "Use with your existing agent" section of the h0x-flow docs site.
 
 ## The four touches
 
 | Touch | File | What it does |
 | --- | --- | --- |
 | 1 | `src/lib/vendo.ts` (+ `src/lib/vendo-actions.ts`, `.vendo/tools.json`) | One `createVendo` call: cautious policy + two host actions — `get_weather` (read; generated apps query it for live data) and the risky `send_trip_report` (write; exercises approvals) |
-| 2 | `src/app/api/vendo/[...vendo]/route.ts` | The stock Vendo wire route (what `vendo init` scaffolds) |
+| 2 | `src/app/api/vendo/[...vendo]/route.ts` | The stock h0x-flow wire route (what `vendo init` scaffolds) |
 | 3 | `src/mastra/agents/weather-agent.ts` | `tools: async () => ({ weatherTool, ...(await vendoMastraTools(vendo)) })` |
 | 4 | `src/app/page.tsx` (+ 2 lines in `src/app/api/chat/route.ts`) | `<VendoProvider>` wrap + `<VendoToolResult output>` per tool part; the principal set server-side on Mastra's `RequestContext` |
 
 Everything else is the starter (`src/mastra/**` is `mastra init`'s output —
 only the agent file carries the marked diff) plus the guide's chat route and a
-plain `useChat` page. All Vendo lines sit inside `--- vendo:` … `--- /vendo`
+plain `useChat` page. All h0x-flow lines sit inside `--- vendo:` … `--- /vendo`
 comment fences (same convention as `examples/ai-sdk-agent`).
 
 Notes on the seam:
@@ -44,7 +44,7 @@ cp .env.example .env   # add OPENAI_API_KEY (the starter agent's model)
 pnpm dev               # http://localhost:3000
 ```
 
-Two models, deliberately: your agent keeps its own, and Vendo's `models` block
+Two models, deliberately: your agent keeps its own, and h0x-flow's `models` block
 powers generation and the delegate. That block is in `src/lib/vendo.ts` and it
 is what SELECTS — `OPENAI_API_KEY` only funds it. With no provider key, set
 `VENDO_API_KEY` instead and the composition leaves both seats to the Cloud
@@ -86,4 +86,4 @@ Upstream status (2026-07-20): #9005 is closed as completed upstream
 (2025-11-27), but the failure still reproduces live on `@mastra/core` 1.51.0
 (the latest stable) — first turn works, the second turn's history replay
 400s at `api.openai.com/v1/responses`. Entirely a Mastra-side issue, nothing
-Vendo-specific; re-try unpinning on future `@mastra/core` releases.
+h0x-flow-specific; re-try unpinning on future `@mastra/core` releases.

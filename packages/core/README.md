@@ -1,6 +1,6 @@
 # @vendoai/core
 
-Defines the shared Vendo types, schemas, format constants, validators, hashes,
+Defines the shared h0x-flow types, schemas, format constants, validators, hashes,
 and conformance seams used across the block set.
 
 Ships ESM first with a CommonJS `require` condition on both subpaths, so CJS

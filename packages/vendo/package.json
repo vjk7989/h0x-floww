@@ -1,7 +1,7 @@
 {
   "name": "@vendoai/vendo",
   "version": "0.55.0",
-  "description": "The Vendo umbrella: default composition, public wire routes, React provider, and the vendo CLI.",
+  "description": "The h0x-flow umbrella: default composition, public wire routes, React provider, and the vendo CLI.",
   "keywords": [
     "ai",
     "agent",
@@ -12,11 +12,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/runvendo/vendo.git",
+    "url": "git+https://github.com/vjk7989/h0x-floww.git",
     "directory": "packages/vendo"
   },
   "homepage": "https://vendo.run",
-  "bugs": "https://github.com/runvendo/vendo/issues",
+  "bugs": "https://github.com/vjk7989/h0x-floww/issues",
   "engines": {
     "node": ">=20"
   },

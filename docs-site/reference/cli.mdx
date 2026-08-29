@@ -9,12 +9,12 @@ The `@vendoai/vendo` package owns the `vendo` bin. `vendo --version` prints the 
 | Command | What it does |
 | --- | --- |
 | [`init [dir]`](#vendo-init-dir) | Wire the handler, extract tools and theme, resolve a model key |
-| [`login`](#vendo-login) | Claim a Vendo Cloud key; it lands in `.env.local` |
+| [`login`](#vendo-login) | Claim a h0x-flow Cloud key; it lands in `.env.local` |
 | [`doctor [dir]`](#vendo-doctor) | Verify the install from the files on disk: wiring, config, tools, deps |
 | [`sync [dir]`](#vendo-sync) | Re-extract tools and baselines, then judge what moved |
 | [`knowledge <verb>`](#vendo-knowledge) | Sync local docs into the product knowledge base |
 | [`mcp <command>`](#vendo-mcp) | Generate MCP registry discovery and domain-verification files |
-| [`cloud <command>`](#vendo-cloud) | Use the public Vendo Cloud API |
+| [`cloud <command>`](#vendo-cloud) | Use the public h0x-flow Cloud API |
 | [`config <command>`](#vendo-config) | Show which layer owns each `.vendo` config surface |
 
 `init`, `login`, `doctor`, `sync`, and `knowledge` reject an option they do not recognize and exit `1` before doing anything; a value flag missing its value fails the same way. `mcp`, `cloud`, and `config` do not check their flags — an unrecognized option is ignored there, though an unrecognized sub-command still exits `1`.
@@ -37,7 +37,7 @@ Init never writes to a file you authored. Mounting `<VendoProvider>` is the one 
 | --- | --- | --- |
 | `--use-case <name>` | `embedded`, `agent-loop`, `mcp` | how people will use the agent |
 | `--auth <preset>` | `authJs`, `clerk`, `supabase`, `auth0`, `jwt`, `none` | which auth preset to wire |
-| `--cloud-key <key>` | a `vnd_` key | writes an existing Vendo Cloud key to `.env.local` |
+| `--cloud-key <key>` | a `vnd_` key | writes an existing h0x-flow Cloud key to `.env.local` |
 | `--byo` | | declines the Cloud key offer |
 | `--ai` / `--no-ai` | | force the AI judgment pass on or off |
 | `--base-url <url>` | a full `http(s)` URL | where the app runs **in dev**. Lands in `.env.local` as `VENDO_BASE_URL`; never a deployed URL |
@@ -45,7 +45,7 @@ Init never writes to a file you authored. Mounting `<VendoProvider>` is the one 
 | `--posture <name>` | `local`, `broker` | which authorization server fronts the door. Not asked — `broker` opts out of the dev sign-in key. `--use-case mcp` only |
 | `--service-key` | | the dev sign-in key, which a local door already wires by default. `--use-case mcp` only |
 
-`--posture broker` exits `1` on a dev URL that is not `https://`. Vendo Cloud registers that origin as the tenant's forwarding address and refuses a non-https one, so the door would be written and then fail on its first request. Take `--posture local`: zero config, and it works on http. [The rest of the rule](/reference/vendo-init#every-flag).
+`--posture broker` exits `1` on a dev URL that is not `https://`. h0x-flow Cloud registers that origin as the tenant's forwarding address and refuses a non-https one, so the door would be written and then fail on its first request. Take `--posture local`: zero config, and it works on http. [The rest of the rule](/reference/vendo-init#every-flag).
 
 ### Overriding detection
 
@@ -60,7 +60,7 @@ Init never writes to a file you authored. Mounting `<VendoProvider>` is the one 
 | --- | --- |
 | `--yes` | skip every prompt and take the detected defaults |
 | `--agent` | route the questions through a coding agent instead of a terminal prompt |
-| `--force` | regenerate Vendo-owned files under `.vendo/`. Never replaces host source |
+| `--force` | regenerate h0x-flow-owned files under `.vendo/`. Never replaces host source |
 | `--check` / `--no-check` | run `vendo doctor` at the end, or skip it. Never changes init's exit code |
 
 `--cloud-key` and `--byo` answer the same question, as do `--ai` and `--no-ai` and `--check` and `--no-check`. Passing both halves of a pair exits `1`.
@@ -73,7 +73,7 @@ The full walkthrough is on [vendo init](/reference/vendo-init).
 
 ## `vendo login`
 
-Claims a Vendo Cloud key through the [claim ceremony](https://vendo.run/auth.md). The CLI prints a pairing code and approval URL, then polls until a human approves in the browser.
+Claims a h0x-flow Cloud key through the [claim ceremony](https://vendo.run/auth.md). The CLI prints a pairing code and approval URL, then polls until a human approves in the browser.
 
 The minted `VENDO_API_KEY` is written to `.env.local` in the current working directory and never printed. Run it from the same directory you ran init in.
 
@@ -121,7 +121,7 @@ Sync fails soft. An extraction failure still exits `0`, because a sync problem m
 | --- | --- |
 | `--strict` | CI gate: exit `2` on breaking tool changes, `3` when saved references point at them |
 | `--json` | print exactly one report object on stdout. Never prompts |
-| `--report` | push the report to Vendo Cloud |
+| `--report` | push the report to h0x-flow Cloud |
 | `--review` | show queued and new loosenings and confirm before writing. Cannot combine with `--json` |
 | `--full` | judge the whole catalog instead of only what moved |
 | `--yes` | take the flags as given and never prompt |
@@ -156,7 +156,7 @@ Derived slots follow their source. `accentText` is the accent's contrast color, 
 
 The base advances only on a run with no pinned slots. `--theme-refresh` takes every changed slot and records the base.
 
-### What reaches Vendo Cloud
+### What reaches h0x-flow Cloud
 
 | Artifact | When | Collection |
 | --- | --- | --- |
@@ -267,7 +267,7 @@ It prints both the DNS TXT record and the HTTP challenge value (`v=MCPv1; k=ed25
 
 ## `vendo cloud`
 
-Client for the public Vendo Cloud API. Read results print as JSON.
+Client for the public h0x-flow Cloud API. Read results print as JSON.
 
 | Command | What it does |
 | --- | --- |
@@ -323,7 +323,7 @@ Surfaces: `design-rules.md`, `brief.md`, `theme.json`, `policy.json`, `overrides
 | Command | What replaced it |
 | --- | --- |
 | `vendo refine` | `vendo sync` AI-enriches `.vendo` now |
-| `vendo playground` | set Vendo up in your own repo: `vendo init`, then `vendo doctor` |
+| `vendo playground` | set h0x-flow up in your own repo: `vendo init`, then `vendo doctor` |
 
 Both still parse and exit `1` with a line pointing at the replacement.
 

@@ -1,4 +1,4 @@
-# The Vendo plugin for Claude Code
+# The h0x-flow plugin for Claude Code
 
 Two files and one skill. That is the whole plugin, and it is deliberate: the
 MCP door already projects the product's tools verbatim, so a plugin has nothing

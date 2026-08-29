@@ -1,7 +1,7 @@
 {
   "name": "@vendoai/apps",
   "version": "0.55.0",
-  "description": "The Vendo app artifact, build engine, sandbox seam, and runtime.",
+  "description": "The h0x-flow app artifact, build engine, sandbox seam, and runtime.",
   "keywords": [
     "ai",
     "agent",
@@ -11,11 +11,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/runvendo/vendo.git",
+    "url": "git+https://github.com/vjk7989/h0x-floww.git",
     "directory": "packages/apps"
   },
   "homepage": "https://vendo.run",
-  "bugs": "https://github.com/runvendo/vendo/issues",
+  "bugs": "https://github.com/vjk7989/h0x-floww/issues",
   "engines": {
     "node": ">=20"
   },

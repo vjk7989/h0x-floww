@@ -1,14 +1,14 @@
 ---
 title: "Orgs & memberships"
 sidebarTitle: "Orgs & memberships"
-description: "Vendo keeps no roster. Your host answers who this caller works with, once per request, and that one answer unlocks sharing, the org workspace, org policy, and org limits."
+description: "h0x-flow keeps no roster. Your host answers who this caller works with, once per request, and that one answer unlocks sharing, the org workspace, org policy, and org limits."
 ---
 
-Vendo has no org chart. There is no roster to sync, no invite table, no
+h0x-flow has no org chart. There is no roster to sync, no invite table, no
 membership row of ours to keep in step with yours.
 
 On every request your host answers one question — which orgs is this caller in? —
-and Vendo believes the answer for exactly that request.
+and h0x-flow believes the answer for exactly that request.
 
 ## The seam
 
@@ -59,7 +59,7 @@ workspace, and there are no org pools to count.
 ### …or let Cloud keep the directory
 
 Writing and maintaining this query is real work. [Tenants](/users-orgs/tenants)
-is Vendo Cloud keeping that roster for you — with `VENDO_API_KEY` set and no
+is h0x-flow Cloud keeping that roster for you — with `VENDO_API_KEY` set and no
 `auth.memberships` of your own, the SDK asks the directory instead. Set
 `auth.memberships` and your assertion wins, always; the directory is never
 consulted.
@@ -73,7 +73,7 @@ This is the whole model, and the rules that fall out of it:
 - Resolved **once per request** and read by every door downstream, so one request
   can never see two different answers.
 - **Never persisted.** There is no orgs table and no members table in the store.
-  Removing someone from an org in your tables removes them from Vendo on their
+  Removing someone from an org in your tables removes them from h0x-flow on their
   very next request — nothing to propagate, and no cache to invalidate when you
   assert memberships yourself.
 - An **ephemeral visitor is not even asked.** A principal you marked
@@ -85,8 +85,8 @@ This is the whole model, and the rules that fall out of it:
 
 <Note>
   Because the answer is asserted per request, your identity system stays the
-  single source of truth for who is in what. Vendo never disagrees with it,
-  because Vendo never has a second copy.
+  single source of truth for who is in what. h0x-flow never disagrees with it,
+  because h0x-flow never has a second copy.
 </Note>
 
 ---

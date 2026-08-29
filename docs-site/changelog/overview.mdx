@@ -1,7 +1,7 @@
 ---
 title: "Changelog"
 sidebarTitle: "Changelog"
-description: "Weekly release notes for the Vendo SDK and runtime: new features, updates, and fixes, newest first."
+description: "Weekly release notes for the h0x-flow SDK and runtime: new features, updates, and fixes, newest first."
 ---
 
 <Update label="July 17, 2026" description="Week of July 14 – July 20">
@@ -86,7 +86,7 @@ The new version invalidates any in-client approval granted against the pre-rebas
 
 Grants, approvals, connected accounts, and history are deliberately kept where they were. Nothing on the host side changes, as long as your `principal(req)` returns `null` before sign-in and a real principal after. See [Auth](/howto/auth).
 
-**Reserved `vendo:` subject namespace.** Webhook deliveries execute under `vendo:webhook:<source>`. `principal(req)` resolvers that return a `vendo:*` subject or `kind: "org"` are rejected at the wire, because those identities are Vendo-owned.
+**Reserved `vendo:` subject namespace.** Webhook deliveries execute under `vendo:webhook:<source>`. `principal(req)` resolvers that return a `vendo:*` subject or `kind: "org"` are rejected at the wire, because those identities are h0x-flow-owned.
 
 Update audit readers that filter on the bare `webhook:<source>` form to match the new prefix. See [Auth](/howto/auth).
 
@@ -160,7 +160,7 @@ Server code boots from `/app/start.sh` when present, otherwise `/app/server.js`.
 
 Create is always read-class, because it produces a jailed tree document. Edit is downgraded to read-class only when the app is owner-scoped, is a tree app, and the instruction does not require server code.
 
-Server-flavored edits, host writes, destructive actions, and egress keep their approval cards. A tree-classified edit that unexpectedly emits server code fails closed before persistence. See [How Vendo works](/product/how-it-works).
+Server-flavored edits, host writes, destructive actions, and egress keep their approval cards. A tree-classified edit that unexpectedly emits server code fails closed before persistence. See [How h0x-flow works](/product/how-it-works).
 
 </Update>
 
@@ -202,7 +202,7 @@ Missing consent fails closed with a clean not-implemented tool error. See [Serve
 
 **Approval replay for one-off door calls.** When a caller retries an identical destructive call in the same session, the door reuses the parked `ToolCall` id, so a one-off approval authorizes the retry instead of silently re-parking it.
 
-A third attempt re-asks, and consent-source projections never persist. See [How Vendo works](/product/how-it-works).
+A third attempt re-asks, and consent-source projections never persist. See [How h0x-flow works](/product/how-it-works).
 
 **Cold-start door mount hint.** `McpDoorConfig.mount` lets a cold-composed umbrella advertise its door path on the server card. Learned paths never override the configured mount, so a caller discovers the door on the first request.
 

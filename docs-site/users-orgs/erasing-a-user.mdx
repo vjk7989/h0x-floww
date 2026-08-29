@@ -20,8 +20,8 @@ const report = await erase.bySubject(subjectId);
 with a real bucket erases every row and quietly keeps the objects. Pass the same
 adapter you wired as `files`, or `storeFiles(store)` when blobs ride the store.
 
-That is the call for a local or BYO Postgres store. On Vendo Cloud the hosted store
-answers through its own door instead — see [On Vendo Cloud](#on-vendo-cloud) — and
+That is the call for a local or BYO Postgres store. On h0x-flow Cloud the hosted store
+answers through its own door instead — see [On h0x-flow Cloud](#on-vendo-cloud) — and
 handing `eraseStore` a hosted handle throws `Unknown VendoStore handle`.
 
 The report is per-table deleted counts — every table present, zeroes included — plus
@@ -71,7 +71,7 @@ This is the part worth reading twice.
   `createdBy` field and the row survives — deleting it would revoke a team's access
   because whoever set it up left. The redaction is intentionally absent from the
   report, which counts rows destroyed.
-- **Your own tables are untouched.** Vendo erases Vendo's store. Your user row,
+- **Your own tables are untouched.** h0x-flow erases h0x-flow's store. Your user row,
   your billing, your audit log are yours to handle.
 - **Connected accounts live broker-side** and are not part of this cascade.
 
@@ -97,7 +97,7 @@ harness state on its row — survives. Only `bySubject` reaches those.
 
 ---
 
-## On Vendo Cloud
+## On h0x-flow Cloud
 
 `eraseStore` runs the SQL cascade against a local or BYO Postgres store. The hosted
 store carries **its own erase door** with the same two methods, so the cascade runs
@@ -117,7 +117,7 @@ await door.bySubject(subjectId);
 That is exactly the branch the Maple demo ships, so one route works against either
 store.
 
-Erasure against Vendo Cloud needs an admin-scoped `VENDO_API_KEY` — see
+Erasure against h0x-flow Cloud needs an admin-scoped `VENDO_API_KEY` — see
 [Persistence](/production/persistence) for the scope and how to mint one.
 
 ---

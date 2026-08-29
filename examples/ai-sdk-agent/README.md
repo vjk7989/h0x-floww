@@ -1,11 +1,11 @@
-# AI SDK agent + Vendo
+# AI SDK agent + h0x-flow
 
 This is the **unmodified [AI SDK Next.js quickstart chatbot](https://ai-sdk.dev/docs/getting-started/nextjs-app-router)**
 (`useChat` + `streamText` + the weather tool) **plus the lines below** — the
-four-touch Vendo diff that gives an existing AI SDK agent guarded host actions,
+four-touch h0x-flow diff that gives an existing AI SDK agent guarded host actions,
 generated UI, and approvals inside its own chat.
 
-Docs guide: *Use with your existing agent → AI SDK* on the Vendo docs site.
+Docs guide: *Use with your existing agent → AI SDK* on the h0x-flow docs site.
 
 ## The diff
 
@@ -15,13 +15,13 @@ grep the whole integration:
 | Touch | File | What it is |
 | --- | --- | --- |
 | 1 | [`lib/vendo.ts`](lib/vendo.ts) | `createVendo` + the two host actions it guards: the quickstart's weather lookup (now `host_get_weather`, risk `read`) and a deliberately risky `sendTripReport` (`host_send_trip_report`, risk `write` — parks for approval). Descriptors live in [`.vendo/tools.json`](.vendo/tools.json), exactly where `vendo init` extracts them in a real app. |
-| 2 | [`app/api/vendo/[...vendo]/route.ts`](app/api/vendo/%5B...vendo%5D/route.ts) | The stock wire route. It serves apps and approvals to the embeds — "Vendo minus the conversation". |
+| 2 | [`app/api/vendo/[...vendo]/route.ts`](app/api/vendo/%5B...vendo%5D/route.ts) | The stock wire route. It serves apps and approvals to the embeds — "h0x-flow minus the conversation". |
 | 3 | [`app/api/chat/route.ts`](app/api/chat/route.ts) | One spread: `...(await vendoTools(vendo, { principal }))` from `@vendoai/vendo/ai-sdk`. Your loop, your model — plus `vendo_host_*` (guard-wrapped host actions), `vendo_make`, and `vendo_delegate`. |
 | 4 | [`app/page.tsx`](app/page.tsx) | `<VendoProvider>` around the chat and one `dynamic-tool` case that hands tool outputs to `<VendoToolResult>` — app-ref envelopes render the inline app embed, approval-ref envelopes render the approval card, plain data renders nothing. Plus one fenced spacer div: the inline embeds are much taller than chat text, and without it the quickstart's fixed input sits on top of the last card at the bottom of the scroll. |
 
 Plus one config line ([`next.config.ts`](next.config.ts)):
 `serverExternalPackages: ["@vendoai/apps", "esbuild", "@electric-sql/pglite", "@vendoai/store"]`
-keeps Vendo's app checker and its native/wasm modules out of the bundler.
+keeps h0x-flow's app checker and its native/wasm modules out of the bundler.
 `@vendoai/apps` is the entry that matters — it reaches esbuild through a variable
 specifier the bundler cannot see, so an `"esbuild"` entry on its own is inert.
 The only starter code that *moved* is

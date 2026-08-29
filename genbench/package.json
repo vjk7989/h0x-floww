@@ -2,7 +2,7 @@
   "name": "@vendoai/genbench",
   "version": "0.0.1",
   "private": true,
-  "description": "Why not build this in-house? Runs hand-written prompts through the real Vendo pipeline and raw-Claude baselines against one fictional product, and scores them. Not published.",
+  "description": "Why not build this in-house? Runs hand-written prompts through the real h0x-flow pipeline and raw-Claude baselines against one fictional product, and scores them. Not published.",
   "type": "module",
   "engines": {
     "node": ">=20"

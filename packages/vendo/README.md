@@ -1,6 +1,6 @@
 # @vendoai/vendo
 
-Vendo puts an agent inside your product. Customers can build views, act through
+h0x-flow puts an agent inside your product. Customers can build views, act through
 your APIs, and automate work inside your brand and guardrails.
 
 ```bash
@@ -10,10 +10,10 @@ npx vendo init
 
 This is the default composition: the public wire handler, React provider,
 policy-bound agent and app blocks, persistence, MCP door, and the `vendo` CLI.
-Install individual `@vendoai/*` blocks only when you want to compose Vendo
+Install individual `@vendoai/*` blocks only when you want to compose h0x-flow
 yourself.
 
-Vendo extracts host APIs as signed-in-user tools, renders theme-driven React
+h0x-flow extracts host APIs as signed-in-user tools, renders theme-driven React
 surfaces, applies approvals and audit at one execution choke point, and uses
 PGlite locally with the same schema on production Postgres. The store runtime
 (`createStore`, `envSecrets`, `storeSecrets`, `secretStore`) is re-exported

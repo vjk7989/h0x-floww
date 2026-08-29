@@ -1,18 +1,18 @@
 ---
 title: "Telemetry"
 sidebarTitle: "Telemetry"
-description: "What a running Vendo deployment reports about itself, what the build tooling reports, what neither ever sends, and every way to turn both off."
+description: "What a running h0x-flow deployment reports about itself, what the build tooling reports, what neither ever sends, and every way to turn both off."
 ---
 
-Vendo collects two streams: what a running deployment reports about itself, and
+h0x-flow collects two streams: what a running deployment reports about itself, and
 what the build and development tooling reports.
 
 Neither ever carries a prompt, a tool argument, a row, a message, or a person.
 
 ## What a deployment reports
 
-Runtime telemetry is Vendo describing its own behavior inside your process —
-which adapters it booted with, how a turn went, and whether Vendo's own code
+Runtime telemetry is h0x-flow describing its own behavior inside your process —
+which adapters it booted with, how a turn went, and whether h0x-flow's own code
 warned or failed.
 
 It uploads only when `VENDO_API_KEY` is set and no kill switch is tripped. A
@@ -37,13 +37,13 @@ contract change on both the SDK and the console.
 | `agent_run` | One agent turn ends | `durationMs`, `ttftMs`, `storeMs`, `promptMs`, `modelMs`, `toolsMs`, `guardMs`, `steps`, `toolCalls`, `tools`, `modelFamily`, `outcome`, `errorCode` |
 | `app_generated` | One app generation finishes | `components` (uses per name), `durationMs`, `outcome`, `kind` |
 | `guard_decision` | The guard renders a decision | `kind`, `decision`, `tool` |
-| `sdk_error` | Vendo's own logger emits `warn` or `error` | `code`, `level`, `message`, `data`, `stack`, `runtime` |
+| `sdk_error` | h0x-flow's own logger emits `warn` or `error` | `code`, `level`, `message`, `data`, `stack`, `runtime` |
 
 `agent_run`'s time fields are durations only, never content. `ttftMs` is how long
 the person waited for the first word, and the phase marks say where the turn's
 wall time went — never what was read, prompted, thought, called, or judged.
 
-`sdk_error` is the one with free text, and the text is Vendo's own authored
+`sdk_error` is the one with free text, and the text is h0x-flow's own authored
 sentence. `data` carries each logged key's shape, never its value, and `stack`
 carries `@vendoai` frames only.
 
@@ -71,7 +71,7 @@ exception: it rides the stock Anthropic provider and carries none of them.
 
 ## Routing SDK logs somewhere else
 
-Every `warn` or `error` Vendo writes to the operator log also becomes an
+Every `warn` or `error` h0x-flow writes to the operator log also becomes an
 `sdk_error` event. To send those lines to your own observability stack, pass a
 `logger`:
 

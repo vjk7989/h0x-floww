@@ -1,7 +1,7 @@
 {
   "name": "@vendoai/ui",
   "version": "0.55.0",
-  "description": "Headless hooks + optional chrome for Vendo: the client, every surface, and the vendo-genui/v2 tree renderer.",
+  "description": "Headless hooks + optional chrome for h0x-flow: the client, every surface, and the vendo-genui/v2 tree renderer.",
   "keywords": [
     "ai",
     "agent",
@@ -12,11 +12,11 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/runvendo/vendo.git",
+    "url": "git+https://github.com/vjk7989/h0x-floww.git",
     "directory": "packages/ui"
   },
   "homepage": "https://vendo.run",
-  "bugs": "https://github.com/runvendo/vendo/issues",
+  "bugs": "https://github.com/vjk7989/h0x-floww/issues",
   "engines": {
     "node": ">=20"
   },

@@ -1,11 +1,11 @@
 ---
 title: "Persistence"
 sidebarTitle: "Persistence"
-description: "Where threads, apps, records, grants, approvals, and audit rows live on Vendo Cloud, and what the store refuses."
+description: "Where threads, apps, records, grants, approvals, and audit rows live on h0x-flow Cloud, and what the store refuses."
 ---
 
 Your Cloud key is your database. Threads, apps, records, blobs, grants,
-approvals, audit, and runs persist in Vendo Cloud's Postgres.
+approvals, audit, and runs persist in h0x-flow Cloud's Postgres.
 
 ## The store slot fills itself
 
@@ -90,4 +90,4 @@ matched. `insertIfAbsent` and `compareAndSwap` return `null` when another caller
 won.
 
 Both are optional on the handle, which is why the calls above are guarded. Your
-own collections expose them; Vendo's internal tables vary.
+own collections expose them; h0x-flow's internal tables vary.

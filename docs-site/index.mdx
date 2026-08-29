@@ -1,8 +1,8 @@
 ---
-title: "Set up Vendo with your agent"
+title: "Set up h0x-flow with your agent"
 sidebarTitle: "Quickstart"
 tag: "Start here"
-description: "One paste. Your coding agent installs Vendo, runs init, and wires it into whatever your repo already is."
+description: "One paste. Your coding agent installs h0x-flow, runs init, and wires it into whatever your repo already is."
 ---
 
 import AgentPromptCard from "/snippets/agent-prompt-card.mdx"
@@ -34,7 +34,7 @@ No agent handy? Do it by hand. Three steps.
 
     On pnpm the install downloads everything, then exits 1 with `Ignored build
     scripts: @mongodb-js/zstd, esbuild, node-liblzma`. None of the three needs
-    compiling — Vendo reaches esbuild through its Node API, and the other two
+    compiling — h0x-flow reaches esbuild through its Node API, and the other two
     are the shell's optional native `tar` backends behind guarded imports
     nothing calls. pnpm writes the three names into your `pnpm-workspace.yaml`
     with a placeholder; set all three to `false` and install again.
@@ -64,15 +64,15 @@ No agent handy? Do it by hand. Three steps.
 
     <div className="direction-cards">
       <CardGroup cols={3}>
-        <Card title="Vendo's Full-Stack Agent" href="/product/quickstart" img="/images/cards/direction-product.svg">
-          Vendo runs the loop and renders screens in your brand.
+        <Card title="h0x-flow's Full-Stack Agent" href="/product/quickstart" img="/images/cards/direction-product.svg">
+          h0x-flow runs the loop and renders screens in your brand.
 
           `<VendoProvider>`
 
           Quickstart →
         </Card>
         <Card title="In your existing agent" href="/existing-agent/quickstart" img="/images/cards/direction-existing-agent.svg">
-          Keep your loop. Vendo adds tools and renders the result.
+          Keep your loop. h0x-flow adds tools and renders the result.
 
           `vendoTools(vendo)`
 

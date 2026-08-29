@@ -10,7 +10,7 @@ Nobody uses someone else's app. Every copy is a new app with a new id, and nothi
 
 Export writes a `.vendoapp` archive. Import mints a fresh `app_` id before it even validates the document, because an artifact's own id is never trusted.
 
-`fork` does the same in one call and records `forkedFrom` so the lineage is readable. `share` and `publish` hand the copy to Vendo Cloud, and both need `VENDO_API_KEY`.
+`fork` does the same in one call and records `forkedFrom` so the lineage is readable. `share` and `publish` hand the copy to h0x-flow Cloud, and both need `VENDO_API_KEY`.
 
 <Frame caption="Nothing about the original's authority crosses the line.">
   <svg viewBox="0 0 700 132" width="100%" role="img" aria-label="What travels with a copy: the document, the app.tsx screen, the secret names. What stays behind: every grant, and the owner's conversation.">
@@ -254,7 +254,7 @@ export function Overview() {
 
 `export { Remixable } from`, `export * from`, and an `import` followed by an `export` all work, aliased or not, relative or through a `tsconfig` path, however many of your own modules the chain passes through.
 
-It is a trace, not a name match — so a `Remixable` that is genuinely your own is never captured as Vendo's. When a wrapper cannot be traced, sync says so on the line under the pin count rather than reporting zero captures over a file that plainly has a wrapper in it:
+It is a trace, not a name match — so a `Remixable` that is genuinely your own is never captured as h0x-flow's. When a wrapper cannot be traced, sync says so on the line under the pin count rather than reporting zero captures over a file that plainly has a wrapper in it:
 
 ```text
 pins: 0 captured, 0 drifted
@@ -262,7 +262,7 @@ warning: 1 <Remixable> wrapper was found but NOT captured — sync could not tra
   demos/maple/Overview.tsx:4 — <Remixable> was NOT captured: `Remixable` comes from "@host/vendo-kit", and following that module's exports never reached @vendoai/ui's Remixable. Fix it either way: import it directly (`import { Remixable } from "@vendoai/ui/chrome"`), or re-export it from "@host/vendo-kit" (`export { Remixable } from "@vendoai/ui/chrome"`). Then re-run `vendo sync`.
 ```
 
-That one is a warning, not an exit code: sync cannot prove a `Remixable` it could not trace is Vendo's, so it reports it instead of failing your build on the guess. `sync --json` carries the same lines as `pins.unattributed`. Baseline pruning is held for that run too — a wrapper sync stopped recognizing is still a wrapper, and its baseline is what existing forks render from.
+That one is a warning, not an exit code: sync cannot prove a `Remixable` it could not trace is h0x-flow's, so it reports it instead of failing your build on the guess. `sync --json` carries the same lines as `pins.unattributed`. Baseline pruning is held for that run too — a wrapper sync stopped recognizing is still a wrapper, and its baseline is what existing forks render from.
 
 ### Components outside your project root
 
@@ -303,7 +303,7 @@ Update the component, run `vendo sync`, and the new baseline overwrites the old 
   </svg>
 </Frame>
 
-Vendo says so everywhere the fork is opened or edited. `open()` attaches a server-authoritative `seedDrift` to the payload, edit results carry the same field, and the renderer shows an in-surface notice above the fork.
+h0x-flow says so everywhere the fork is opened or edited. `open()` attaches a server-authoritative `seedDrift` to the payload, edit results carry the same field, and the renderer shows an in-surface notice above the fork.
 
 **Update** — the ✦ menu's own item, and `client.apps.reseed` underneath it — rebuilds the remix on the new baseline by replaying every wish the seed recorded, oldest first. The remix is the whole list, so replaying only the wish it started from would silently undo everything asked for since.
 

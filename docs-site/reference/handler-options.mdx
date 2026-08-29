@@ -15,7 +15,7 @@ Exactly one key is required: an identity, as `auth`.
 | `models` | The model seats, keyed by job. See [below](#models) |
 | `auth` | The one door for identity — a preset's result (`authJs()`) or an object you write. Holds `principal`, `facts`, `pools`, `memberships`, `actAs`, and `oauth`. See [below](#identity) |
 | `principal` | **Deprecated alias** for `auth.principal`. Still works; mutually exclusive with `auth` |
-| `memberships` | `(principal) => Promise<Membership[]>`, the twin of `auth.memberships` for a host on the deprecated aliases. Set it and it wins outright. With `VENDO_API_KEY` and this seam unset, memberships come from Vendo Cloud, so `async () => []` is how a deployment with no orgs declines the tenant directory. Mutually exclusive with `auth` — setting both throws, so put it in `auth` instead |
+| `memberships` | `(principal) => Promise<Membership[]>`, the twin of `auth.memberships` for a host on the deprecated aliases. Set it and it wins outright. With `VENDO_API_KEY` and this seam unset, memberships come from h0x-flow Cloud, so `async () => []` is how a deployment with no orgs declines the tenant directory. Mutually exclusive with `auth` — setting both throws, so put it in `auth` instead |
 | `tools` | Host tool declarations in memory, the same `ExtractedTool[]` sync writes to `.vendo/tools.json`, and executable tools. The two shapes are told apart by `execute` |
 | `skills` | `Skill[]` mounted at `/host/skills` for the harness to list cheaply and load on demand. A name collision fails at boot naming both |
 | `components` | Host components exposed to the generation prompt, merged with `.vendo/catalog.json` with explicit entries winning by name. The same object `<VendoProvider components>` takes |
@@ -38,7 +38,7 @@ Exactly one key is required: an identity, as `auth`.
 | `guard` | The deployment's choke point as one value. See [below](#guard) |
 | `limits` | Per-user and per-org limits in your own logic. See [below](#limits) and [Limits](/users-orgs/limits) |
 | `secrets` | `{ get(name) }`. Default is environment-backed lookup |
-| `logger` | One structured event per line Vendo would have written to the console. Unset keeps those console lines |
+| `logger` | One structured event per line h0x-flow would have written to the console. Unset keeps those console lines |
 | `telemetry` | `boolean`. Wires the telemetry client. Unset is off |
 | `development` | Dev-only injection seams. `NODE_ENV=development` enables them, `false` disables that default |
 | `profileDir` | The project root `.vendo/` is read under. Unset keeps the process cwd |
@@ -97,7 +97,7 @@ Omitting the `guard` key entirely surfaces an unconfigured-policy notice in the 
 
 ## `limits`
 
-Vendo counts, you decide. The callback is asked once before each metered action.
+h0x-flow counts, you decide. The callback is asked once before each metered action.
 
 ```ts
 createVendo({
@@ -199,14 +199,14 @@ There is no `agent: { … }` options bag. It was one bag holding both owners, so
 
 | `vendo()` knob | Default | Behavior |
 | --- | --- | --- |
-| `maxSteps` | `20` | Agent steps, a model call plus a tool round trip, per turn. At the cap Vendo stops the loop and emits a step-limit notice on the stream |
+| `maxSteps` | `20` | Agent steps, a model call plus a tool round trip, per turn. At the cap h0x-flow stops the loop and emits a step-limit notice on the stream |
 | `historyWindow` | full thread | Whole past messages re-sent per turn, kept whole so tool-call and result stay paired. The stored thread is untouched |
 | `maxOutputTokens` | the model default | Upper bound on tokens the model may emit per turn |
 | `contextTokenBudget` | unset | Bounds the assembled context the loop sends |
 
-`maxInitialTools` bounds how many host tools the model sees at the start of a turn. Past the cap Vendo picks a deterministic read-first loadout, safest risk then name, and the rest stay reachable through `find_tools`.
+`maxInitialTools` bounds how many host tools the model sees at the start of a turn. Past the cap h0x-flow picks a deterministic read-first loadout, safest risk then name, and the rest stay reachable through `find_tools`.
 
-Vendo's own `vendo_*` tools are always active and do not count toward the cap. Every tool, initial or searched-in, executes through the same guard binding.
+h0x-flow's own `vendo_*` tools are always active and do not count toward the cap. Every tool, initial or searched-in, executes through the same guard binding.
 
 `toolOutputCap` truncates only the copy sent to the model. Persistence and the streamed thread are unaffected.
 
@@ -214,7 +214,7 @@ A harness you named yourself carries its own equivalents. These four are `vendo(
 
 ## Turn cancellation
 
-Vendo cancels an in-flight turn when the client disconnects. The wire forwards the request's `AbortSignal` into the agent loop, so closing the tab aborts the provider call and stops further steps.
+h0x-flow cancels an in-flight turn when the client disconnects. The wire forwards the request's `AbortSignal` into the agent loop, so closing the tab aborts the provider call and stops further steps.
 
 The thread is left consistent and resumable. No configuration is required.
 
@@ -222,7 +222,7 @@ The thread is left consistent and resumable. No configuration is required.
 
 The server's base path is the fixed constant `/api/vendo`. It is not configurable: the handler answers only paths under it and returns `not-found` for anything else.
 
-`createVendoClient({ baseUrl })` configures the client side. Point it at a full origin when the browser talks to a Vendo deployment on another host.
+`createVendoClient({ baseUrl })` configures the client side. Point it at a full origin when the browser talks to a h0x-flow deployment on another host.
 
 ## Identity
 
@@ -240,7 +240,7 @@ interface HostAuthPreset {
 }
 ```
 
-`principal` is the only required member; each other one absent means the documented "not asserted" behavior, never an error. Vendo mints no principals of its own, so a config with no `principal` at all refuses to compose.
+`principal` is the only required member; each other one absent means the documented "not asserted" behavior, never an error. h0x-flow mints no principals of its own, so a config with no `principal` at all refuses to compose.
 
 A hard-wired subject is a development stand-in, never a deployment:
 
@@ -248,7 +248,7 @@ A hard-wired subject is a development stand-in, never a deployment:
 createVendo({ auth: { principal: async () => ({ kind: "user", subject: "dev" }) } });
 ```
 
-`principal(req)` must return `kind: "user"` or `null`. Returning `kind: "org"`, or a subject starting with `vendo:`, is rejected at the wire because those identities are Vendo-owned. `null` refuses the request with `forbidden`.
+`principal(req)` must return `kind: "user"` or `null`. Returning `kind: "org"`, or a subject starting with `vendo:`, is rejected at the wire because those identities are h0x-flow-owned. `null` refuses the request with `forbidden`.
 
 If you want logged-out visitors served, resolve them to a principal of your own choosing. Marking it `ephemeral: true` keeps it out of org membership and blocks it from connecting external accounts.
 

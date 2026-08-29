@@ -1,6 +1,6 @@
 # Seeded invoice host fixture
 
-This is a minimal standalone Next.js app used by Vendo wave-3 tests. It has a deterministic in-memory invoice store, a plain cookie session, an OpenAPI file for extraction, and intentionally shaped routes for route-scan coverage. It does not import from the repository's legacy apps or packages.
+This is a minimal standalone Next.js app used by h0x-flow wave-3 tests. It has a deterministic in-memory invoice store, a plain cookie session, an OpenAPI file for extraction, and intentionally shaped routes for route-scan coverage. It does not import from the repository's legacy apps or packages.
 
 ## Seed data
 
@@ -37,7 +37,7 @@ The OpenAPI 3.1 contract is the local `openapi.json` file; the app deliberately 
 
 ## Deliberate extraction cases
 
-- `src/app/api/vendo/[...vendo]/route.ts` is Vendo's mounted route and must be excluded from extracted host tools.
+- `src/app/api/vendo/[...vendo]/route.ts` is h0x-flow's mounted route and must be excluded from extracted host tools.
 - `src/pages/api/export-data.ts` is an opaque `withReporting(handler)` export. It contains no local HTTP verb evidence, so a scanner must fail closed and emit it disabled.
 - `downloadInvoicesArchive` is a real `GET /api/invoices/archive` OpenAPI operation whose name does not begin with a recognized read word. It must not be inferred as read risk merely from its HTTP method.
 - `GET /api/reports/summary` is a pure re-export through the `@fixture/*` TypeScript alias (`export { GET } from "@fixture/lib/reports-handler"`), so the scanner must resolve the alias to classify it. Deliberately absent from openapi.json.

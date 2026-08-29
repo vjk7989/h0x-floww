@@ -17,7 +17,7 @@ asks for comes back failed. Nothing else looks wrong.
 
 ## Why
 
-Vendo syntax-checks each generated screen with `esbuild`, imported at runtime
+h0x-flow syntax-checks each generated screen with `esbuild`, imported at runtime
 through a variable specifier behind bundler-ignore comments. Without
 `serverExternalPackages`, Next bundles `@vendoai/apps` into the server chunk, so
 that import becomes a bare resolve from your app root instead — and under pnpm's

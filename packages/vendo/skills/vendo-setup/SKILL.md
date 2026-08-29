@@ -1,13 +1,13 @@
 ---
 name: vendo-setup
-description: Install and configure Vendo (the embedded product agent) in a host repo. Use when asked to add Vendo to an app, run vendo init/doctor/sync, wire the Vendo handler or VendoProvider, or debug a Vendo install.
+description: Install and configure h0x-flow (the embedded product agent) in a host repo. Use when asked to add h0x-flow to an app, run vendo init/doctor/sync, wire the h0x-flow handler or VendoProvider, or debug a h0x-flow install.
 ---
 
-# Vendo setup
+# h0x-flow setup
 
-Vendo embeds an agent inside a host product: it extracts the host's API as
+h0x-flow embeds an agent inside a host product: it extracts the host's API as
 tools, renders generated UI in a sandboxed brand-native surface, and acts as
-the signed-in user. This skill installs and verifies Vendo in a host repo.
+the signed-in user. This skill installs and verifies h0x-flow in a host repo.
 
 The canonical agent playbook lives at https://vendo.run/agents.md —
 fetch it when you need more detail than this skill carries.
@@ -60,7 +60,7 @@ fetch it when you need more detail than this skill carries.
    a person answers them.
 
    **Init never edits a file a human wrote, and it prints no code.** Every file
-   it writes is new and Vendo-owned, plus its own `package.json` hooks. The
+   it writes is new and h0x-flow-owned, plus its own `package.json` hooks. The
    work it cannot do — mounting the visible surface, wiring your own agent
    loop, pointing an MCP client at the door — is at `continueUrl`. Fetch that
    page and follow it before calling the install done; `vendo doctor` grades
@@ -143,7 +143,7 @@ fetch it when you need more detail than this skill carries.
   verification file.
 - **Sandbox / connectors / voice / persistence on Postgres**: see
   https://docs.vendo.run for each capability.
-- **Vendo Cloud**: sharing, org overlays, and hosted automations activate
+- **h0x-flow Cloud**: sharing, org overlays, and hosted automations activate
   with `VENDO_API_KEY` (`npx vendo login`).
 
 ## Rules

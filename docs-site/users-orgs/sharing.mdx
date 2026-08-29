@@ -6,7 +6,7 @@ description: "Give one person, one team, or a whole org access to an app — a g
 
 <Note>
   An owner's ✦ menu on an app carries a **Share with &lt;tenant&gt;** toggle when
-  [Vendo Cloud's directory](/users-orgs/tenants) names a tenant the owner is in.
+  [h0x-flow Cloud's directory](/users-orgs/tenants) names a tenant the owner is in.
   Turning it on grants `org:<tenantId>` at `viewer`; turning it off revokes it.
   The wire mounts `GET /apps/:id/grants` and `PUT|DELETE
   /apps/:id/grants/:principal` for it — everything below still applies, the
@@ -50,7 +50,7 @@ The "who" is a string, and there are exactly three shapes:
 
 `user:` is compared against the caller's subject. `team:` and `org:` are matched
 only against the memberships [your host asserted](/users-orgs/orgs-and-memberships)
-on that request — Vendo consults no org chart of its own.
+on that request — h0x-flow consults no org chart of its own.
 
 So one `org:` row covers everybody in the org, today and after the next hire, with
 no fan-out and nothing to re-run when your roster changes. Take someone out of the
@@ -117,7 +117,7 @@ app's subtree.
 A member you asserted with `admin: true` reads as **owner of every app that org
 holds**, with no grant row at all.
 
-That is what makes an org's apps administrable without Vendo keeping a role system
+That is what makes an org's apps administrable without h0x-flow keeping a role system
 of its own: you already know who your admins are, and you say so per request.
 
 Membership alone is not access. An ordinary member of the org reaches an org-held
@@ -152,7 +152,7 @@ names invite exactly the wrong reach.
 | | What it does |
 | --- | --- |
 | `appAccess(...).grant` | Gives a principal access to **the live app**, in your deployment |
-| `AppsRuntime.share` | Sends a **frozen copy** of the document to Vendo Cloud and returns a snapshot |
+| `AppsRuntime.share` | Sends a **frozen copy** of the document to h0x-flow Cloud and returns a snapshot |
 | `AppsRuntime.publish` | Sends a copy to the Cloud **registry** as a published version |
 
 Both copy-outs require an owner and a `VENDO_API_KEY`, and both refuse with

@@ -33,7 +33,7 @@ For production, pass a Postgres connection string explicitly, for example `creat
 | `vendo_knowledge_docs` | `id, data, refs, created_at, updated_at` | knowledge corpus documents (built-in local engine) |
 | `vendo_knowledge_chunks` | `id, data, refs, created_at, updated_at` | knowledge corpus chunks (built-in local engine index) |
 
-A generated app's OWN data is not here: it is a SQL database of its own, one fenced Postgres schema per app (`postgresAppDatabase`, `appSchema`). What remains of the `app:<appId>:<name>` grammar is the app-scoped record collections and blob namespaces Vendo's own blocks address that way: those WRITES require an existing `vendo_apps` row and fail closed with `not-found` ("session may have expired") when there is none — the app never existed, or it was erased; reads on a missing app return empty. Except for the reserved names below, collection names remain opaque and use `vendo_records`; non-`app:`-prefixed collections and namespaces have no principal linkage.
+A generated app's OWN data is not here: it is a SQL database of its own, one fenced Postgres schema per app (`postgresAppDatabase`, `appSchema`). What remains of the `app:<appId>:<name>` grammar is the app-scoped record collections and blob namespaces h0x-flow's own blocks address that way: those WRITES require an existing `vendo_apps` row and fail closed with `not-found` ("session may have expired") when there is none — the app never existed, or it was erased; reads on a missing app return empty. Except for the reserved names below, collection names remain opaque and use `vendo_records`; non-`app:`-prefixed collections and namespaces have no principal linkage.
 
 Generic record collections and the dedicated door-owned and knowledge tables
 expose the optional

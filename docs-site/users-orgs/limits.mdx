@@ -1,7 +1,7 @@
 ---
 title: "Limits"
 sidebarTitle: "Limits"
-description: "Cap what one user spends, cap what a whole org spends, in your own logic. Vendo counts; your policy decides."
+description: "Cap what one user spends, cap what a whole org spends, in your own logic. h0x-flow counts; your policy decides."
 ---
 
 One callback is asked once before each metered action, and its answer is
@@ -175,7 +175,7 @@ return {
 | --- | --- |
 | `{ allow: false, message }` | **You’ve reached your limit** — your sentence, verbatim |
 | `false` | **You’ve reached your limit** — "This request wasn’t run — nothing was changed." |
-| the meter could not be read | **Couldn’t check your limit** — "Vendo Cloud is busy right now, so this limit could not be checked — this is temporary, not a cap." |
+| the meter could not be read | **Couldn’t check your limit** — "h0x-flow Cloud is busy right now, so this limit could not be checked — this is temporary, not a cap." |
 
 A reached cap is a status, not a failure, so the notice carries no alert mark.
 
@@ -210,7 +210,7 @@ strictly better. Every such denial logs `limits.callback_error`.
 
 ## Per-tenant caps
 
-If you let [Vendo Cloud keep your tenant directory](/users-orgs/tenants),
+If you let [h0x-flow Cloud keep your tenant directory](/users-orgs/tenants),
 caps come with it — set in the console, not in code. Each one carries a
 **scope**:
 

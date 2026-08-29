@@ -96,7 +96,7 @@ to Tailwind's documented default list in full. Example:
 `["var(--font-geist-sans)", ...fontFamily.sans]` labels as
 `Geist Sans, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji,
 Segoe UI Emoji, Segoe UI Symbol, Noto Color Emoji`.
-If a value is genuinely absent, label the default Vendo should choose and note
+If a value is genuinely absent, label the default h0x-flow should choose and note
 the uncertainty in the repo's labeling notes when Task 11 adds real labels.
 
 Layer 2 scores each dimension as one point. Hex colors compare
@@ -116,13 +116,13 @@ Derive the expected inventory from the app's source-owned API surface:
   the HTTP method checks. For framework handlers such as NextAuth or
   UploadThing, label the methods exported by that route file.
 - Include only host-relative paths, with path params in the same template style
-  Vendo should emit, for example `/api/invoices/{id}`.
+  h0x-flow should emit, for example `/api/invoices/{id}`.
 - Use uppercase HTTP methods.
 - `readOrWrite` is `read` for read-only operations, normally `GET`.
 - `readOrWrite` is `write` for operations that create, update, delete, trigger,
   send, cancel, revoke, or otherwise change host state.
 - Route-scan-derived tools are always labeled `write` even for `GET`, because
-  route code can hide side effects behind read-shaped methods and Vendo must not
+  route code can hide side effects behind read-shaped methods and h0x-flow must not
   auto-allow inferred route handlers. OpenAPI-derived tools may use `read` for
   spec-declared read-only operations.
 

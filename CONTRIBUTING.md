@@ -1,6 +1,6 @@
-# Contributing to Vendo
+# Contributing to h0x-flow
 
-Thanks for helping make Vendo better.
+Thanks for helping make h0x-flow better.
 
 ## Development setup
 
@@ -35,7 +35,7 @@ The demo host apps live under `examples/`.
 
 ## What happens to your PR
 
-Vendo is developed in a private monorepo that also holds the closed-source
+h0x-flow is developed in a private monorepo that also holds the closed-source
 Cloud half, and the open-source half is projected out to this repo. Your change
 travels in two steps, and only the first one involves you.
 

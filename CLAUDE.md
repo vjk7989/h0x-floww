@@ -1,6 +1,6 @@
-# Vendo
+# h0x-flow
 
-Vendo is a devtool that lets a company's users customize its product: an
+h0x-flow is a devtool that lets a company's users customize its product: an
 embedded agent that acts through the host's own API as the user and renders
 generated UI in a sandboxed, brand-native surface.
 
@@ -20,7 +20,7 @@ generated UI in a sandboxed, brand-native surface.
 - `pnpm install` · `pnpm build` · `pnpm test` · `pnpm test:affected` (scoped to changed packages — the local default) · `pnpm typecheck` · `pnpm lint` (turbo-cached)
 - Demo: `pnpm --filter demo-bank dev` (Maple)
 
-## Vendo Cloud
+## h0x-flow Cloud
 
 - Cloud sells exactly two categories: infrastructure that is painful to run
   yourself (sandbox, inference, persistence, brokers, hosted automations) and
@@ -45,8 +45,8 @@ generated UI in a sandboxed, brand-native surface.
 
 - Answer code-behavior questions from source only — read the definition and
   its callers, cite `file:line`. Docs and comments are leads, never answers.
-- Use Yousef's Vendo Cloud account for any and all testing.
-- Vendo-facing API/SDK/CLI design additionally routes through the
+- Use Yousef's h0x-flow Cloud account for any and all testing.
+- h0x-flow-facing API/SDK/CLI design additionally routes through the
   **vendo-dx** skill (on top of api-design-dx).
 - Never commit to `main`; branch and open a PR.
 - UI-affecting changes are verified in a real browser. Tests and typecheck
